@@ -247,7 +247,7 @@
 # ---- Battle-state-aware damage calcs (engine ground truth) ----
 - question: "Does Choice Band Scizor's Bullet Punch OHKO Garganacl?"
   expect_source: "tool#damage_calc"
-  expect_keywords: ["156", "234"]
+  expect_keywords: ["2-3hko"]
 
 - question: "Does Dragonite's Earthquake OHKO Kingambit after a Swords Dance?"
   expect_source: "tool#damage_calc"

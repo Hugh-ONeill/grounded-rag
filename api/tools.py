@@ -150,7 +150,9 @@ def type_matchup(attacking_type: str, defender: str, via_move: str | None = None
         if blockers and mult > 0:
             lines.append(f"Note: {mon['name']} can have the ability {', '.join(blockers)}, "
                          f"which negates or absorbs {att}-type moves entirely.")
-    return [_passage(f"tool#type_matchup", f"{att} vs {target}", "\n".join(lines))]
+    supports = ([f"pokedex#{mon['name']}"] if mon else []) + ([f"move#{via_move}"] if via_move else [])
+    return [_passage(f"tool#type_matchup", f"{att} vs {target}", "\n".join(lines))] \
+        + _corpus_docs(supports)
 
 
 def defensive_profile(defender: str) -> list[dict]:
@@ -170,7 +172,8 @@ def defensive_profile(defender: str) -> list[dict]:
         if mult != 1.0:
             label = {0.0: "immune to"}.get(mult, f"takes {mult:g}x from")
             lines.append(f"- {label}: {', '.join(buckets[mult])}")
-    return [_passage(f"tool#type_matchup", f"defensive profile: {target}", "\n".join(lines))]
+    return [_passage(f"tool#type_matchup", f"defensive profile: {target}", "\n".join(lines))] \
+        + _corpus_docs([f"pokedex#{mon['name']}"] if mon else [])
 
 
 def speed_check(name_a: str, name_b: str) -> list[dict]:
@@ -186,7 +189,8 @@ def speed_check(name_a: str, name_b: str) -> list[dict]:
     content = (f"Base Speed comparison, computed from base stats: {a['name']} has base Speed "
                f"{sa}, {b['name']} has base Speed {sb}; {verdict}. Note: items (Choice Scarf), "
                f"natures, EVs, and boosts change effective speed in battle.")
-    return [_passage("tool#speed_check", f"{a['name']} vs {b['name']} speed", content)]
+    return [_passage("tool#speed_check", f"{a['name']} vs {b['name']} speed", content)] \
+        + _corpus_docs([f"pokedex#{a['name']}", f"pokedex#{b['name']}"])
 
 
 def stat_query(stat: str, type_filter: str | None = None, n: int = 10,
@@ -205,6 +209,27 @@ def stat_query(stat: str, type_filter: str | None = None, n: int = 10,
              f"alternate forms included): "
              + ", ".join(f"{i}. {name} ({v})" for i, (v, name) in enumerate(rows, 1))]
     return [_passage("tool#stat_query", f"{order} {stat}: {scope}", lines[0])]
+
+
+def _corpus_docs(sources: list[str]) -> list[dict]:
+    """Fetch the corpus documents a tool computed FROM, as citable passages:
+    a damage calc's provenance is the pokedex and move docs behind its inputs."""
+    out = []
+    try:
+        from db import connect
+        with connect() as conn, conn.cursor() as cur:
+            for src in sources:
+                cur.execute(
+                    "SELECT corpus, source, title, content FROM chunks WHERE source = %s "
+                    "ORDER BY id LIMIT 1", (src,))
+                row = cur.fetchone()
+                if row:
+                    out.append({"corpus": row[0], "source": row[1], "title": row[2],
+                                "content": row[3], "similarity": 0.0, "kw_rank": 0.0,
+                                "rerank_score": 0.99})
+    except Exception:
+        pass
+    return out
 
 
 def _ability_immunity_note(mon: dict, move_type: str, as_defender_option: bool = False) -> str | None:
@@ -368,7 +393,11 @@ def damage_calc(attacker: str, move: str, defender: str,
                f"{verdict}.{applied} Baseline assumptions unless stated: level 100, 31 IVs, "
                f"0 EVs, neutral natures, no items or abilities."
                + (f" {note}" if note else ""))
-    return [_passage("tool#damage_calc", f"{a['name']} {move_name} vs {b['name']}", content)]
+    supports = [f"pokedex#{a['name']}", f"pokedex#{b['name']}", f"move#{move_name}"]
+    if note:
+        supports.append(f"gen9ou_chaos#{b['name']}")
+    return [_passage("tool#damage_calc", f"{a['name']} {move_name} vs {b['name']}", content)] \
+        + _corpus_docs(supports)
 
 
 def ohko_search(attacker: str, move: str, defender: str) -> list[dict]:
@@ -453,7 +482,11 @@ def ohko_search(attacker: str, move: str, defender: str) -> list[dict]:
     note = _ability_immunity_note(b, move_type)
     if note:
         lines.append(note + " In that case the whole escalation is moot.")
-    return [_passage("tool#ohko_search", f"{a['name']} {move_name} vs {b['name']}", "\n".join(lines))]
+    supports = [f"pokedex#{a['name']}", f"pokedex#{b['name']}", f"move#{move_name}"]
+    if note:
+        supports.append(f"gen9ou_chaos#{b['name']}")
+    return [_passage("tool#ohko_search", f"{a['name']} {move_name} vs {b['name']}", "\n".join(lines))] \
+        + _corpus_docs(supports)
 
 
 def survive_search(attacker: str, move: str, defender: str,
@@ -552,4 +585,8 @@ def survive_search(attacker: str, move: str, defender: str,
                      "a screen, and the best defensive Tera.")
         if note:
             lines.append(note)
-    return [_passage("tool#survive_search", f"{b['name']} vs {move_name}", "\n".join(lines))]
+    supports = [f"pokedex#{a['name']}", f"pokedex#{b['name']}", f"move#{move_name}"]
+    if note:
+        supports.append(f"gen9ou_chaos#{b['name']}")
+    return [_passage("tool#survive_search", f"{b['name']} vs {move_name}", "\n".join(lines))] \
+        + _corpus_docs(supports)
