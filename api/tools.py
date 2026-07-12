@@ -237,6 +237,52 @@ def _corpus_docs(sources: list[str]) -> list[dict]:
 
 GROUNDING = "Gravity, Smack Down, an Iron Ball, or a Mold Breaker attacker"
 
+# nature -> (raised stat, lowered stat); neutral natures omitted
+NATURE_EFFECTS = {
+    "Lonely": ("Attack", "Defense"), "Brave": ("Attack", "Speed"),
+    "Adamant": ("Attack", "Special Attack"), "Naughty": ("Attack", "Special Defense"),
+    "Bold": ("Defense", "Attack"), "Relaxed": ("Defense", "Speed"),
+    "Impish": ("Defense", "Special Attack"), "Lax": ("Defense", "Special Defense"),
+    "Timid": ("Speed", "Attack"), "Hasty": ("Speed", "Defense"),
+    "Jolly": ("Speed", "Special Attack"), "Naive": ("Speed", "Special Defense"),
+    "Modest": ("Special Attack", "Attack"), "Mild": ("Special Attack", "Defense"),
+    "Quiet": ("Special Attack", "Speed"), "Rash": ("Special Attack", "Special Defense"),
+    "Calm": ("Special Defense", "Attack"), "Gentle": ("Special Defense", "Defense"),
+    "Sassy": ("Special Defense", "Speed"), "Careful": ("Special Defense", "Special Attack"),
+}
+_EV_KEYS = {"hp": "HP", "atk": "Attack", "def": "Defense",
+            "spa": "Special Attack", "spd": "Special Defense", "spe": "Speed"}
+
+
+def _apply_standard(mon: dict, mods: dict) -> dict:
+    """Resolve {"standard": True} into the Pokemon's most standard Smogon set
+    (nature, EVs, item, ability); explicit question modifiers stay on top."""
+    if not mods.get("standard"):
+        return mods
+    from corpora.smogon import standard_set
+    found = standard_set(mon["name"])
+    if not found:
+        return mods
+    set_name, s = found
+    base: dict = {"set_name": set_name}
+    if s.get("nature") in NATURE_EFFECTS:
+        base["nature"] = NATURE_EFFECTS[s["nature"]]
+    if s.get("evs"):
+        base["evs"] = {_EV_KEYS[k]: v for k, v in s["evs"].items() if k in _EV_KEYS}
+    if s.get("item"):
+        base["item"] = s["item"]
+    if s.get("ability"):
+        base["ability"] = s["ability"]
+    out = dict(base)
+    for k, v in mods.items():
+        if k == "standard":
+            continue
+        if k in ("boosts", "evs") and k in out:
+            out[k] = {**out[k], **v}
+        else:
+            out[k] = v
+    return out
+
 
 def _ability_immunity(mon: dict, move_type: str) -> dict | None:
     """Cross-reference: does this Pokemon have an ability that negates the incoming
@@ -337,6 +383,7 @@ def _calc_rolls(a: dict, move_name: str, b: dict, am: dict, dm: dict, weather: s
             special_attack=o["Special Attack"], special_defense=o["Special Defense"],
             speed=o["Speed"], weight_kg=m["weight_kg"],
             item=_engine_id(mods["item"]) if mods.get("item") else "none",
+            ability=_engine_id(mods["ability"]) if mods.get("ability") else "none",
             status=mods.get("status", "none"),
             terastallized=bool(tera), tera_type=(tera or "typeless").lower(),
             moves=[Move(id=mv, pp=16)])
@@ -379,6 +426,7 @@ def damage_calc(attacker: str, move: str, defender: str,
     move_entry = d["moves"].get(move.lower())
     if not a or not b or not move_entry:
         return []
+    am, dm = _apply_standard(a, am), _apply_standard(b, dm)
     move_name = move_entry[0]
     lo, hi, def_hp = _calc_rolls(a, move_name, b, am, dm, weather, terrain)
     if lo is None:
@@ -408,6 +456,10 @@ def damage_calc(attacker: str, move: str, defender: str,
         verdict = "no damage"
     def describe(name, mods):
         bits = []
+        if mods.get("set_name"):
+            bits.append(f"standard Smogon set: {mods['set_name']}")
+        if mods.get("ability"):
+            bits.append(mods["ability"])
         if mods.get("boosts"):
             bits += [f"{'+' if n > 0 else ''}{n} {s}" for s, n in mods["boosts"].items()]
         if mods.get("item"):

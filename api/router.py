@@ -111,6 +111,9 @@ def _parse_mods(question: str, mons: list[str]):
         default = fb_dfn if stat in ("HP", "Defense", "Special Defense") else fb_atk
         bind(m.start(), default).setdefault("evs", {})[stat] = 252
     strip(r"(?:max|252)\s+(?:attack|atk|spa|special attack|hp|def|defense|spd|special defense|speed|spe)")
+    for m in re.finditer(r"\bstandard\b|\bsmogon(?:['\u2019]s)? set\b|\bsmogon\b", q):
+        bind(m.start(), fb_atk)["standard"] = True
+    strip(r"\bstandard\b|\bsmogon(?:['\u2019]s)? set\b|\bsmogon\b")
     m = re.search(r"\bburn(?:ed|t)?\b", q)
     if m:
         bind(m.start(), fb_atk)["status"] = "brn"
