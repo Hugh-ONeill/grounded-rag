@@ -16,7 +16,9 @@ class Settings(BaseSettings):
     chunk_size: int = 900
     chunk_overlap: int = 150
     top_k: int = 5
-    min_similarity: float = 0.30
+    # Tuned via eval/: nomic-embed cosine sims run hot (on-topic ~0.64-0.78,
+    # off-topic ~0.40-0.54). 0.30 never fires; 0.60 splits the two cleanly.
+    min_similarity: float = 0.60
 
     # nomic-embed-text is 768-dim. Change if you swap embedding models.
     embed_dim: int = 768
