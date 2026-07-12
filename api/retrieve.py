@@ -2,22 +2,47 @@
 
 The vector leg finds semantically similar chunks; the keyword leg catches exact
 entity names ("Sitrus Berry", "Ho-Oh") that embedding similarity dilutes in
-chatty questions. Both signals also feed the refusal gate, because measured
-similarity bands overlap: an off-topic question with adjacent vocabulary can
-out-score an on-topic question with awkward phrasing.
+chatty questions.
 """
 from db import connect
 from embeddings import embed_one
 from config import settings
 
-POOL = 30  # candidates per leg before fusion
+POOL = 60  # candidates per leg before fusion; entity families (a species'
+           # pokedex/learnset/usage/item docs) crowd ranks, so cast wide
 RRF_K = 60
 
 # titles weigh 'A' (heaviest): a named entity should match a doc's title, not its body
 _TSV = ("(setweight(to_tsvector('english', coalesce(title,'')), 'A') || "
         "setweight(to_tsvector('english', content), 'B'))")
-# OR-semantics: comparison questions name several entities, no doc contains them all
-_TSQ = "websearch_to_tsquery('english', regexp_replace(%s, '\\s+', ' OR ', 'g'))"
+
+# Postgres ts_rank has no IDF: a title hit on rare "garganacl" scores the same as
+# a title hit on generic "move", and OR-querying every question word floods the
+# leg with common-word matches. So we select the question's rarest lexemes
+# ourselves, from a document-frequency table computed at first use.
+_df_cache: dict[str, int] | None = None
+KW_TERMS = 4       # search at most the N rarest question terms
+KW_MAX_DF = 0.05   # ignore terms in >5% of docs: "move" matches 900 titles
+
+
+def _lexeme_df(conn) -> dict[str, int]:
+    global _df_cache
+    if _df_cache is None:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT word, ndoc FROM ts_stat($$SELECT {_TSV} FROM chunks$$)")
+            _df_cache = {w: n for w, n in cur.fetchall()}
+    return _df_cache
+
+
+def _rare_terms(conn, question: str) -> list[str]:
+    """Stem the question, keep lexemes that exist in the corpus, return the rarest."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT unnest(tsvector_to_array(to_tsvector('english', %s)))", (question,))
+        lexemes = [row[0] for row in cur.fetchall()]
+    df = _lexeme_df(conn)
+    ceiling = max(2, int(KW_MAX_DF * max(df.values(), default=0)))
+    rare = sorted({l for l in lexemes if l in df and df[l] <= ceiling}, key=lambda l: df[l])
+    return rare[:KW_TERMS]
 
 
 async def retrieve(question: str, k: int | None = None, corpus: str | None = None) -> list[dict]:
@@ -43,23 +68,32 @@ async def retrieve(question: str, k: int | None = None, corpus: str | None = Non
 
 
 def _keyword_leg(question: str, k: int, corpus: str | None) -> list[dict]:
-    """Keyword leg: top-k chunks by weighted full-text rank."""
-    where = "AND corpus = %s" if corpus else ""
-    params = [question, question] + ([corpus] if corpus else []) + [question, k]
-    with connect() as conn, conn.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT id, corpus, source, title, content,
-                   ts_rank({_TSV}, {_TSQ}) AS kw_rank
-            FROM chunks
-            WHERE {_TSV} @@ {_TSQ} {where}
-            ORDER BY ts_rank({_TSV}, {_TSQ}) DESC
-            LIMIT %s
-            """,
-            params,
-        )
-        cols = [c.name for c in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+    """Keyword leg: top-k chunks by weighted full-text rank over the question's
+    rarest terms (OR-semantics: comparisons name several entities, and no doc
+    contains them all). Only rare terms are searched (df ceiling), which is the
+    IDF that Postgres ts_rank lacks; with common terms excluded, repetition
+    flooding is gone and no length normalization is needed."""
+    with connect() as conn:
+        terms = _rare_terms(conn, question)
+        if not terms:
+            return []
+        tsq = " | ".join(terms)
+        where = "AND corpus = %s" if corpus else ""
+        params = [tsq, tsq] + ([corpus] if corpus else []) + [k]
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT id, corpus, source, title, content,
+                       ts_rank({_TSV}, to_tsquery('english', %s)) AS kw_rank
+                FROM chunks
+                WHERE {_TSV} @@ to_tsquery('english', %s) {where}
+                ORDER BY kw_rank DESC
+                LIMIT %s
+                """,
+                params,
+            )
+            cols = [c.name for c in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
 async def retrieve_hybrid(question: str, k: int | None = None, corpus: str | None = None) -> list[dict]:
@@ -82,16 +116,13 @@ async def retrieve_hybrid(question: str, k: int | None = None, corpus: str | Non
 
 def rerank(question: str, passages: list[dict]) -> list[dict]:
     """TODO (V2): re-score (question, passage) pairs with a cross-encoder
-    (e.g. sentence-transformers ms-marco MiniLM) and reorder. Also the durable
-    replacement for the threshold gate: refusal margins keep narrowing as the
-    corpus grows, and a calibrated relevance score beats raw cosine similarity."""
+    and reorder. Also the durable replacement for the threshold gate."""
     raise NotImplementedError
 
 
 def passes_threshold(passages: list[dict]) -> bool:
     """Anti-hallucination gate, two signals: strong semantic similarity OR a strong
-    keyword (entity-name) match among the top passages. Measured bands overlap on
-    similarity alone; see the README's threshold story."""
+    keyword (entity-name) match among the top passages."""
     top = passages[:3]
     if any(p.get("similarity", 0.0) >= settings.min_similarity for p in top):
         return True
