@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from retrieve import retrieve, passes_threshold
 from llm import answer_stream
 
+REFUSAL = "I don't know based on the available sources."
+
 app = FastAPI(title="grounded-rag")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
@@ -35,7 +37,7 @@ async def ask(req: AskRequest):
     async def gen():
         yield f"event: sources\ndata: {json.dumps(passages)}\n\n"
         if not passes_threshold(passages):
-            yield "event: token\ndata: I don't know based on the available sources.\n\n"
+            yield f"event: token\ndata: {json.dumps(REFUSAL)}\n\n"
             yield "event: done\ndata: {}\n\n"
             return
         async for tok in answer_stream(req.question, passages):
