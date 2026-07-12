@@ -278,3 +278,8 @@
 - question: "How can Skarmory survive Heatran's Flamethrower?"
   expect_source: "tool#survive_search"
   expect_keywords: ["assault vest"]
+
+# ---- Cross-referenced ability immunities in damage answers ----
+- question: "Does Garchomp's Earthquake OHKO Bronzong?"
+  expect_source: "tool#damage_calc"
+  expect_keywords: ["levitate"]

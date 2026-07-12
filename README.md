@@ -119,7 +119,11 @@ boosts), recomputing engine rolls at each rung until the KO is guaranteed, with 
 correctly reported as unfixable by investment. The same search runs in reverse for defenders:
 "what would Garganacl need to survive Choice Band Garchomp's Earthquake?" escalates defensive
 nature, HP and defense EVs, Assault Vest, a screen, weather, and the best defensive Tera
-(picked from the type chart, including outright immunities) until the hit is survived. The tools also carry the conditional mechanics a raw type chart misses: a
+(picked from the type chart, including outright immunities) until the hit is survived.
+The damage tools also cross-reference their own answers against the rest of the corpus: a
+calc into Bronzong reports the raw numbers and then warns that Bronzong runs Levitate on 95%
+of its observed gen9ou sets, which makes it immune — the engine assumes no ability, and the
+tool says so instead of letting a technically-correct number mislead. The tools also carry the conditional mechanics a raw type chart misses: a
 Ground-vs-Flying immunity is reported together with its Gravity/Smack Down/Iron Ball and
 Roost variants (with recomputed multipliers), and ability-based immunities like Levitate are
 flagged from data. Deliberately not LLM function-calling: the router is a dozen lines of
@@ -136,7 +140,7 @@ the moment the corpus grew past what the vector leg could carry alone.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 65 gold questions (62 answerable, covering
+Run it yourself: `python -m eval.run_eval`. Over 66 gold questions (63 answerable, covering
 usage stats, corpus-wide aggregations, stat superlatives, species data, moves, abilities,
 items, learnsets, in-context comparisons, usage-versus-movepool intent, and computed answers:
 type matchups with conditional immunities, speed checks, typed stat queries, battle-state-aware
@@ -145,8 +149,8 @@ deliberately unanswerable), the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (62/62) |
-| Answer faithfulness | 100% (58/58) |
+| Retrieval hit-rate@k | 100% (63/63) |
+| Answer faithfulness | 100% (59/59) |
 | Refusal precision (no-answer) | 100% (3/3) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
@@ -213,6 +217,7 @@ python -m venv .venv && .venv/bin/pip install -e ./api
 - [x] Battle-state-aware calc inputs: boosts, setup moves, items, natures, EVs, burn, weather, Tera
 - [x] Tiered OHKO escalation search ("what would it take to OHKO?")
 - [x] Defensive escalation search ("what would it take to survive?")
+- [x] Cross-referenced ability immunities in damage answers, with observed usage rates
 - [ ] Monotype moveset tables and replay ingestion for the crystal-battle corpus
 - [ ] Validate the k8s manifests end to end
 - [ ] Query rewriting, conversation memory

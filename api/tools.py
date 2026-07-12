@@ -207,6 +207,41 @@ def stat_query(stat: str, type_filter: str | None = None, n: int = 10,
     return [_passage("tool#stat_query", f"{order} {stat}: {scope}", lines[0])]
 
 
+def _ability_immunity_note(mon: dict, move_type: str, as_defender_option: bool = False) -> str | None:
+    """Cross-reference: does this Pokemon have a possible ability that negates the
+    incoming move type? If the usage-stats corpus has observed ability data for it,
+    cite the real split; otherwise report the possibility. The engine calc itself
+    assumes no ability, so this is the correction the raw numbers need."""
+    blockers = [ab for ab in mon.get("abilities", []) if ABILITY_IMMUNITIES.get(ab) == move_type]
+    if not blockers:
+        return None
+    ability = blockers[0]
+    observed = None
+    try:
+        from db import connect
+        import re as _re
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT content FROM chunks WHERE corpus='crystal_battle' AND source LIKE %s LIMIT 1",
+                (f"%chaos#{mon['name']}",))
+            row = cur.fetchone()
+        if row:
+            m = _re.search(rf"{_engine_id(ability)} \((\d+)%\)", row[0])
+            if m:
+                observed = int(m.group(1))
+    except Exception:
+        pass
+    if as_defender_option:
+        base = (f"Alternatively, {mon['name']} running the ability {ability} is simply immune "
+                f"to {move_type}-type moves, no investment needed")
+    else:
+        base = (f"Cross-reference: this calculation assumes no ability, but {mon['name']} can "
+                f"have {ability}, which makes it immune to {move_type}-type moves")
+    if observed is not None:
+        base += f" (observed on {observed}% of its sets in gen9ou usage data)"
+    return base + "."
+
+
 # ---- damage calc (poke-engine) ------------------------------------------------
 
 def _engine_id(name: str) -> str:
@@ -326,11 +361,13 @@ def damage_calc(attacker: str, move: str, defender: str,
         return f"{name} ({', '.join(bits)})" if bits else name
 
     applied = f" Weather: {weather}." if weather != "none" else ""
+    note = _ability_immunity_note(b, move_entry[1])
     content = (f"Damage calculation via the poke-engine battle engine: "
                f"{describe(a['name'], am)}'s {move_name} does {lo}-{hi} damage to "
                f"{describe(b['name'], dm)} ({lo_pct:.0f}-{hi_pct:.0f}% of its {def_hp} max HP): "
                f"{verdict}.{applied} Baseline assumptions unless stated: level 100, 31 IVs, "
-               f"0 EVs, neutral natures, no items or abilities.")
+               f"0 EVs, neutral natures, no items or abilities."
+               + (f" {note}" if note else ""))
     return [_passage("tool#damage_calc", f"{a['name']} {move_name} vs {b['name']}", content)]
 
 
@@ -413,6 +450,9 @@ def ohko_search(attacker: str, move: str, defender: str) -> list[dict]:
     else:
         lines.append("Verdict: not an OHKO even with maximum investment, item, weather, Tera, "
                      "and +6; this move cannot OHKO this target one-on-one.")
+    note = _ability_immunity_note(b, move_type)
+    if note:
+        lines.append(note + " In that case the whole escalation is moot.")
     return [_passage("tool#ohko_search", f"{a['name']} {move_name} vs {b['name']}", "\n".join(lines))]
 
 
@@ -496,15 +536,20 @@ def survive_search(attacker: str, move: str, defender: str,
             lines.append(f"- + {label}: {lo}-{hi} ({pct}): guaranteed survive.")
             break
         lines.append(f"- + {label}: {lo}-{hi} ({pct})")
+    note = _ability_immunity_note(b, move_type, as_defender_option=True)
     if survives_at:
         lines.append(f"Verdict: guaranteed survival requires {', '.join(survives_at)} "
                      f"(applied cumulatively).")
         if maybe_at and maybe_at != survives_at:
             lines.append(f"Low rolls are survivable from {', '.join(maybe_at)}.")
+        if note:
+            lines.append(note)
     elif maybe_at:
         lines.append(f"Verdict: survival is roll-dependent at best, from {', '.join(maybe_at)}; "
                      f"never guaranteed with these levers.")
     else:
         lines.append("Verdict: not survivable one-on-one even with full defensive investment, "
                      "a screen, and the best defensive Tera.")
+        if note:
+            lines.append(note)
     return [_passage("tool#survive_search", f"{b['name']} vs {move_name}", "\n".join(lines))]
