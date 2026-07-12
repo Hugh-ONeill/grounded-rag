@@ -313,3 +313,16 @@
 - question: "What is the Terastal phenomenon?"
   expect_source: "bulbapedia#Terastal phenomenon"
   expect_keywords: []
+
+# ---- Competitive strategy prose (smogon corpus) + standard-set calcs ----
+- question: "How should I play Kingambit in Gen 9 OU?"
+  expect_source: "smogon#Kingambit"
+  expect_keywords: []
+
+- question: "What is the best Great Tusk set?"
+  expect_source: "smogon#Great Tusk"
+  expect_keywords: []
+
+- question: "Does standard Kingambit's Sucker Punch OHKO standard Dragapult?"
+  expect_source: "tool#damage_calc"
+  expect_keywords: ["ohko"]

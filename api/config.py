@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     crystal_battle_path: str = ""
     pokeapi_path: str = ""
     bulbapedia_cache: str = "~/.cache/grounded-rag/bulbapedia"
+    smogon_cache: str = "~/.cache/grounded-rag/smogon"
 
     ollama_host: str = "http://localhost:11434"
     embed_model: str = "nomic-embed-text"
