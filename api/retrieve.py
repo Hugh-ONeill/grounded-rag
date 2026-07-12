@@ -1,9 +1,12 @@
-"""Retrieval: hybrid vector + keyword search with reciprocal rank fusion.
+"""Retrieval: hybrid vector + keyword search, RRF fusion, cross-encoder rerank.
 
 The vector leg finds semantically similar chunks; the keyword leg catches exact
 entity names ("Sitrus Berry", "Ho-Oh") that embedding similarity dilutes in
-chatty questions.
+chatty questions. Fused candidates are then rescored by a cross-encoder that
+reads (question, passage) together, which both improves top-k precision and
+gives the refusal gate a signal that stays comparable as the corpus grows.
 """
+import asyncio
 from db import connect
 from embeddings import embed_one
 from config import settings
@@ -111,19 +114,49 @@ async def retrieve_hybrid(question: str, k: int | None = None, corpus: str | Non
         f["kw_rank"] = float(p["kw_rank"])
         f["rrf"] += 1 / (RRF_K + rank + 1)
 
-    return sorted(fused.values(), key=lambda f: f["rrf"], reverse=True)[:k]
+    candidates = sorted(fused.values(), key=lambda f: f["rrf"], reverse=True)
+    if not settings.use_reranker:
+        return candidates[:k]
+    # rerank the fused pool (not just top-k): the cross-encoder can rescue a
+    # passage that both cheap legs underrank
+    reranked = await asyncio.to_thread(rerank, question, candidates)
+    return reranked[:k]
+
+
+_reranker = None
+
+
+def _get_reranker():
+    global _reranker
+    if _reranker is None:
+        from sentence_transformers import CrossEncoder  # heavy import, deferred
+        _reranker = CrossEncoder(settings.rerank_model)
+    return _reranker
 
 
 def rerank(question: str, passages: list[dict]) -> list[dict]:
-    """TODO (V2): re-score (question, passage) pairs with a cross-encoder
-    and reorder. Also the durable replacement for the threshold gate."""
-    raise NotImplementedError
+    """Rescore (question, passage) pairs with the cross-encoder and reorder.
+    Attaches rerank_score (sigmoid, 0-1) to each passage."""
+    if not passages:
+        return passages
+    scores = _get_reranker().predict(
+        [(question, p["content"]) for p in passages],
+        activation_fn=None,  # raw logits; sigmoid below for a stable 0-1 scale
+    )
+    import math
+    for p, s in zip(passages, scores):
+        p["rerank_score"] = 1 / (1 + math.exp(-float(s)))
+    return sorted(passages, key=lambda p: p["rerank_score"], reverse=True)
 
 
 def passes_threshold(passages: list[dict]) -> bool:
-    """Anti-hallucination gate, two signals: strong semantic similarity OR a strong
+    """Anti-hallucination gate. With the reranker on, gate on its relevance score:
+    it measures answers-the-question, so its margin doesn't erode as the corpus
+    grows. Fallback (reranker off): strong semantic similarity OR a strong
     keyword (entity-name) match among the top passages."""
     top = passages[:3]
+    if any("rerank_score" in p for p in top):
+        return any(p.get("rerank_score", 0.0) >= settings.min_rerank_score for p in top)
     if any(p.get("similarity", 0.0) >= settings.min_similarity for p in top):
         return True
     return any(p.get("kw_rank", 0.0) >= settings.min_keyword_rank for p in top)

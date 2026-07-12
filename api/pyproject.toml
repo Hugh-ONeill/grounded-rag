@@ -13,8 +13,5 @@ dependencies = [
     "pydantic-settings>=2.2",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",            # eval gold questions
+    "sentence-transformers>=3.0",  # cross-encoder reranker (pulls torch)
 ]
-
-# V2 extras (hybrid retrieval + reranking) — add when you get there:
-# "rank-bm25>=0.2"           # keyword scoring
-# "sentence-transformers"    # cross-encoder reranker

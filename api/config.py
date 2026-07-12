@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     # vocabulary coincidences ("boiling point of water" -> Water Gem) cap at ~0.18.
     min_keyword_rank: float = 0.25
 
+    # Cross-encoder reranker: rescoring (question, passage) pairs after hybrid
+    # retrieval. Also the gate's primary signal when enabled: its scores measure
+    # "does this passage answer this question", so they stay comparable as the
+    # corpus grows, unlike raw cosine bands (see README).
+    use_reranker: bool = True
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    # Measured over the gold set: answerable questions bottom out at 0.099
+    # (telegraphic stat text scores low even when it directly answers), off-topic
+    # tops at 0.059. MiniLM chosen over bge-reranker-v2-m3, whose off-topic floor
+    # (0.500) sat inside its answerable band.
+    min_rerank_score: float = 0.08
+
     # nomic-embed-text is 768-dim. Change if you swap embedding models.
     embed_dim: int = 768
 
