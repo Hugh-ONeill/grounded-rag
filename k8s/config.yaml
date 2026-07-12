@@ -1,0 +1,29 @@
+# Non-secret config. OLLAMA_HOST must point at the host GPU running Ollama:
+#   - kind / Docker Desktop:  http://host.docker.internal:11434
+#   - bare-metal k3s:         http://<node-ip>:11434  (and `ollama serve` bound to 0.0.0.0)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rag-config
+  namespace: grounded-rag
+data:
+  CORPUS: "crystal_battle"
+  CRYSTAL_BATTLE_PATH: "/data/crystal-battle"
+  OLLAMA_HOST: "http://host.docker.internal:11434"
+  EMBED_MODEL: "nomic-embed-text"
+  LLM_MODEL: "gemma4:26b-a4b-it-q4_K_M"
+  DATABASE_URL: "postgresql://rag:rag@postgres:5432/rag"
+  TOP_K: "5"
+  MIN_SIMILARITY: "0.30"
+---
+# Demo-grade secret. In production use a real Secret manager / sealed-secrets, not plaintext.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rag-db
+  namespace: grounded-rag
+type: Opaque
+stringData:
+  POSTGRES_USER: rag
+  POSTGRES_PASSWORD: rag
+  POSTGRES_DB: rag

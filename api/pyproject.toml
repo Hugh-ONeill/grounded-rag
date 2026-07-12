@@ -1,0 +1,20 @@
+[project]
+name = "grounded-rag-api"
+version = "0.1.0"
+description = "Local citation-grounded RAG API"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "httpx>=0.27",            # async Ollama client
+    "psycopg[binary]>=3.1",   # Postgres
+    "pgvector>=0.2.5",        # vector type adapter
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",            # eval gold questions
+]
+
+# V2 extras (hybrid retrieval + reranking) — add when you get there:
+# "rank-bm25>=0.2"           # keyword scoring
+# "sentence-transformers"    # cross-encoder reranker

@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: grounded-rag
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: api }
+  template:
+    metadata:
+      labels: { app: api }
+    spec:
+      # crystal-battle corpus is mounted from the host so the API can read the chaos JSON.
+      # On kind: `kind load` won't carry host files — instead mount via hostPath (below) or
+      # bake the data into the image. hostPath shown for a local single-node cluster.
+      containers:
+        - name: api
+          image: grounded-rag-api:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: { name: rag-config }
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: corpus
+              mountPath: /data/crystal-battle
+              readOnly: true
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: corpus
+          hostPath:
+            path: /home/wiz/Developer/grimoire/crystal-battle
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: grounded-rag
+spec:
+  selector: { app: api }
+  ports:
+    - port: 8000
+      targetPort: 8000

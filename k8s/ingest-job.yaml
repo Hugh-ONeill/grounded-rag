@@ -1,0 +1,30 @@
+# One-shot job to build the index. Run after postgres + api image are up:
+#   kubectl apply -f k8s/ingest-job.yaml
+#   kubectl -n grounded-rag logs job/ingest -f
+# Re-run by deleting first: kubectl -n grounded-rag delete job ingest --ignore-not-found
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ingest
+  namespace: grounded-rag
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: ingest
+          image: grounded-rag-api:local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "ingest"]   # WORKDIR is /app (= api/ contents)
+          envFrom:
+            - configMapRef: { name: rag-config }
+          volumeMounts:
+            - name: corpus
+              mountPath: /data/crystal-battle
+              readOnly: true
+      volumes:
+        - name: corpus
+          hostPath:
+            path: /home/wiz/Developer/grimoire/crystal-battle
+            type: Directory
