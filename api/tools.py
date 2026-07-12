@@ -212,22 +212,35 @@ def _engine_id(name: str) -> str:
     return "".join(c for c in name.lower() if c.isalnum())
 
 
-def _level100_neutral(mon: dict):
-    """Final stats at level 100, 31 IVs, 0 EVs, neutral nature."""
+def _level100_neutral(mon: dict, evs: dict | None = None, nature: tuple | None = None):
+    """Final stats at level 100, 31 IVs, given EVs (default 0), given nature
+    (default neutral). nature = (raised_stat, lowered_stat)."""
     s = mon["stats"]
-    hp = 2 * s.get("HP", 1) + 141
-    o = {k: 2 * s.get(k, 1) + 36 for k in
-         ("Attack", "Defense", "Special Attack", "Special Defense", "Speed")}
+    evs = evs or {}
+    hp = 2 * s.get("HP", 1) + 141 + evs.get("HP", 0) // 4
+    o = {}
+    for k in ("Attack", "Defense", "Special Attack", "Special Defense", "Speed"):
+        v = 2 * s.get(k, 1) + 36 + evs.get(k, 0) // 4
+        if nature and nature[0] == k:
+            v = int(v * 1.1)
+        elif nature and nature[1] == k:
+            v = int(v * 0.9)
+        o[k] = v
     return hp, o
 
 
-def damage_calc(attacker: str, move: str, defender: str) -> list[dict]:
+def damage_calc(attacker: str, move: str, defender: str,
+                attacker_mods: dict | None = None, defender_mods: dict | None = None,
+                weather: str = "none") -> list[dict]:
     """Damage rolls for attacker using move into defender, via poke-engine.
-    Level 100, 31 IVs, 0 EVs, neutral natures, no items or abilities applied."""
+    Baseline: level 100, 31 IVs, 0 EVs, neutral natures, no items or abilities.
+    mods: {"item": str, "boosts": {stat: n}, "nature": (up, down),
+           "evs": {stat: n}, "status": "brn", "tera": type} per side."""
     try:
-        from poke_engine import State, Side, Pokemon, Move, calculate_damage
+        from poke_engine import State, Side, Pokemon, Move, Weather, calculate_damage
     except ImportError:
         return []
+    am, dm = attacker_mods or {}, defender_mods or {}
     d = _data()
     a, b = d["mons"].get(attacker.lower()), d["mons"].get(defender.lower())
     move_entry = d["moves"].get(move.lower())
@@ -235,9 +248,10 @@ def damage_calc(attacker: str, move: str, defender: str) -> list[dict]:
         return []
     move_name = move_entry[0]
 
-    def build(m, mv):
-        hp, o = _level100_neutral(m)
+    def build(m, mv, mods):
+        hp, o = _level100_neutral(m, mods.get("evs"), mods.get("nature"))
         types = (m["types"] + ["typeless"])[:2]
+        tera = mods.get("tera")
         return Pokemon(
             id=_engine_id(m["name"]), level=100,
             types=(types[0].lower(), types[1].lower()),
@@ -246,16 +260,30 @@ def damage_calc(attacker: str, move: str, defender: str) -> list[dict]:
             attack=o["Attack"], defense=o["Defense"],
             special_attack=o["Special Attack"], special_defense=o["Special Defense"],
             speed=o["Speed"], weight_kg=m["weight_kg"],
+            item=_engine_id(mods["item"]) if mods.get("item") else "none",
+            status=mods.get("status", "none"),
+            terastallized=bool(tera), tera_type=(tera or "typeless").lower(),
             moves=[Move(id=mv, pp=16)])
 
-    state = State(side_one=Side(pokemon=[build(a, _engine_id(move_name))]),
-                  side_two=Side(pokemon=[build(b, "tackle")]))
+    def side(m, mv, mods):
+        boosts = mods.get("boosts", {})
+        return Side(pokemon=[build(m, mv, mods)],
+                    attack_boost=boosts.get("Attack", 0),
+                    defense_boost=boosts.get("Defense", 0),
+                    special_attack_boost=boosts.get("Special Attack", 0),
+                    special_defense_boost=boosts.get("Special Defense", 0),
+                    speed_boost=boosts.get("Speed", 0))
+
+    state = State(side_one=side(a, _engine_id(move_name), am),
+                  side_two=side(b, "tackle", dm),
+                  weather=Weather(weather),
+                  weather_turns_remaining=-1 if weather != "none" else 0)
     rolls = calculate_damage(state, _engine_id(move_name), "tackle", True)[0]
     if not rolls:
         lo = hi = 0
     else:
         lo, hi = min(rolls), max(rolls)
-    def_hp, _ = _level100_neutral(b)
+    def_hp, _ = _level100_neutral(b, dm.get("evs"), dm.get("nature"))
     lo_pct, hi_pct = 100 * lo / def_hp, 100 * hi / def_hp
     if lo >= def_hp:
         verdict = "a guaranteed OHKO"
@@ -268,8 +296,26 @@ def damage_calc(attacker: str, move: str, defender: str) -> list[dict]:
                    else f"a {n_hi}-{n_lo}HKO depending on rolls")
     else:
         verdict = "no damage"
-    content = (f"Damage calculation via the poke-engine battle engine: {a['name']}'s "
-               f"{move_name} does {lo}-{hi} damage to {b['name']} ({lo_pct:.0f}-{hi_pct:.0f}% "
-               f"of its {def_hp} max HP): {verdict}. Assumptions: level 100, 31 IVs, 0 EVs, "
-               f"neutral natures, no items, abilities, or boosts applied.")
+    def describe(name, mods):
+        bits = []
+        if mods.get("boosts"):
+            bits += [f"{'+' if n > 0 else ''}{n} {s}" for s, n in mods["boosts"].items()]
+        if mods.get("item"):
+            bits.append(mods["item"])
+        if mods.get("nature"):
+            bits.append(f"+{mods['nature'][0]} nature")
+        if mods.get("evs"):
+            bits += [f"{n} {s} EVs" for s, n in mods["evs"].items()]
+        if mods.get("status") == "brn":
+            bits.append("burned")
+        if mods.get("tera"):
+            bits.append(f"Tera {mods['tera'].capitalize()}")
+        return f"{name} ({', '.join(bits)})" if bits else name
+
+    applied = f" Weather: {weather}." if weather != "none" else ""
+    content = (f"Damage calculation via the poke-engine battle engine: "
+               f"{describe(a['name'], am)}'s {move_name} does {lo}-{hi} damage to "
+               f"{describe(b['name'], dm)} ({lo_pct:.0f}-{hi_pct:.0f}% of its {def_hp} max HP): "
+               f"{verdict}.{applied} Baseline assumptions unless stated: level 100, 31 IVs, "
+               f"0 EVs, neutral natures, no items or abilities.")
     return [_passage("tool#damage_calc", f"{a['name']} {move_name} vs {b['name']}", content)]

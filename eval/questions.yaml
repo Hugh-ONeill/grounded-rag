@@ -243,3 +243,16 @@
 - question: "How much damage does Bullet Punch from Scizor do to Garganacl?"
   expect_source: "tool#damage_calc"
   expect_keywords: ["105", "157"]
+
+# ---- Battle-state-aware damage calcs (engine ground truth) ----
+- question: "Does Choice Band Scizor's Bullet Punch OHKO Garganacl?"
+  expect_source: "tool#damage_calc"
+  expect_keywords: ["156", "234"]
+
+- question: "Does Dragonite's Earthquake OHKO Kingambit after a Swords Dance?"
+  expect_source: "tool#damage_calc"
+  expect_keywords: ["guaranteed"]
+
+- question: "How much damage does a burned Garchomp's Earthquake do to Kingambit?"
+  expect_source: "tool#damage_calc"
+  expect_keywords: ["138", "207"]
