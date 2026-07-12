@@ -159,9 +159,10 @@ the moment the corpus grew past what the vector leg could carry alone.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 73 gold questions (70 answerable, covering
+Run it yourself: `python -m eval.run_eval`. Over 76 gold questions (73 answerable, covering
 usage stats, corpus-wide aggregations, stat superlatives, species data, moves, abilities,
-items, learnsets, encyclopedic prose, in-context comparisons, usage-versus-movepool intent,
+items, learnsets, encyclopedic prose, competitive strategy, in-context comparisons,
+usage-versus-movepool intent,
 and computed answers:
 type matchups with conditional immunities, speed checks, typed stat queries, battle-state-aware
 engine damage calculations, and tiered OHKO and survival escalation searches, plus 3
@@ -169,8 +170,8 @@ deliberately unanswerable), the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (70/70) |
-| Answer faithfulness | 100% (64/64) |
+| Retrieval hit-rate@k | 100% (73/73) |
+| Answer faithfulness | 100% (65/65) |
 | Refusal precision (no-answer) | 100% (3/3) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
@@ -199,6 +200,13 @@ Shipped adapters:
   drops anime episodes, TCG, galleries, and sprites. Bulbapedia content is CC BY-NC-SA 2.5:
   the cache never ships, every document carries its source URL, and this stays a local
   personal-use corpus.
+- **`smogon`**: expert competitive strategy from Smogon's Strategy Dex via the
+  [@pkmn data mirror](https://data.pkmn.cc) (Smogon discourages scraping their site; the
+  mirror exists for the ecosystem): peer-reviewed per-Pokemon analyses and named recommended
+  sets with exact spreads, for Gen 9 OU and Gen 2 OU. The sets also power the calc tools'
+  standard-set mode: "does standard Kingambit's Sucker Punch OHKO standard Dragapult?" runs
+  the engine with both Pokemon's real Smogon builds (nature, EVs, item, ability) instead of
+  neutral assumptions. Local personal use, attributed, never redistributed.
 - **`pokeapi`**: general Pokemon knowledge from the [PokeAPI](https://github.com/PokeAPI/pokeapi)
   CSV dataset: one citable document per species (types, base stats, abilities, Pokedex
   entries), per move, per ability, per item, and per learnset. ~4,500 documents; a sparse
