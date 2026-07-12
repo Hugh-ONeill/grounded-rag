@@ -108,15 +108,15 @@ the moment the corpus grew past what the vector leg could carry alone.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 46 gold questions spanning both corpora
-(43 answerable, covering usage stats, corpus-wide aggregations, stat superlatives, species
-data, moves, abilities, items, learnsets, and in-context comparisons, plus 3 deliberately
-unanswerable), the current build scores:
+Run it yourself: `python -m eval.run_eval`. Over 48 gold questions spanning both corpora
+(45 answerable, covering usage stats, corpus-wide aggregations, stat superlatives, species
+data, moves, abilities, items, learnsets, in-context comparisons, and usage-versus-movepool
+intent, plus 3 deliberately unanswerable), the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (43/43) |
-| Answer faithfulness | 100% (40/40) |
+| Retrieval hit-rate@k | 100% (45/45) |
+| Answer faithfulness | 100% (41/41) |
 | Refusal precision (no-answer) | 100% (3/3) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;

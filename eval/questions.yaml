@@ -197,3 +197,12 @@
 - question: "What Pokemon has the highest base stat total?"
   expect_source: "stat_rankings#Base stat total"
   expect_keywords: ["eternatus"]
+
+# ---- Usage-vs-movepool intent (same entity, different question verbs) ----
+- question: "What moves does Marowak use in Gen 2 OU?"
+  expect_source: "gen2ou_chaos#Marowak"
+  expect_keywords: ["earthquake"]
+
+- question: "What moves can Marowak learn?"
+  expect_source: "learnset#Marowak"
+  expect_keywords: []

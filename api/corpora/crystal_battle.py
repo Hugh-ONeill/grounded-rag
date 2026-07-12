@@ -35,8 +35,8 @@ def _species_doc(name: str, s: dict, fmt: str, types: dict):
     if s.get("usage") is not None:
         lines.append(f"Usage: {100*s['usage']:.1f}% of teams.")
     for label, key, denom in [
-        ("Moves", "Moves", raw),
-        ("Items", "Items", raw),
+        ("Commonly used moves", "Moves", raw),
+        ("Commonly held items", "Items", raw),
         ("Abilities", "Abilities", raw),
         ("Tera Types", "Tera Types", raw),
         ("Common teammates", "Teammates", raw),

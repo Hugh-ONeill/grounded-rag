@@ -308,7 +308,8 @@ def load():
         with_levelup = [vg for vg, methods in by_vg.items() if methods.get("1")]
         pool = with_levelup or list(by_vg)
         vg = max(pool, key=lambda v: vg_order.get(v, 0))
-        lines = [f"{name} learnset ({vg_ident.get(str(vg), '?')}): moves {name} can learn."]
+        lines = [f"{name} learnset ({vg_ident.get(str(vg), '?')}): the full movepool of "
+                 f"moves {name} can learn (not what it commonly uses in competitive play)."]
         for method_id, label in METHOD_LABEL.items():
             entries = by_vg[vg].get(method_id)
             if not entries:

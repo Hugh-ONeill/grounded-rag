@@ -16,7 +16,9 @@ passage explicitly states that overall ranking; never derive one by comparing th
 you happen to see. But when the question names specific things (two items, two moves, two
 Pokemon) and the context contains passages for them, do compare them: use the numbers in the
 passages and explain the trade-off. Facts within a single passage are always fine to answer
-directly."""
+directly. For Pokemon, "what moves does X use/run" asks about competitive usage statistics
+(prefer a usage-data passage when present); "what moves can X learn" asks about the
+movepool/learnset."""
 
 
 def _build_prompt(question: str, passages: list[dict]) -> str:
