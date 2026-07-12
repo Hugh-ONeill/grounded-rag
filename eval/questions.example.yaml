@@ -2,6 +2,8 @@
 # `expect_source`: a substring that SHOULD appear in a retrieved chunk's source (retrieval check).
 # `expect_keywords`: terms the answer should contain (cheap faithfulness proxy).
 # `no_answer: true`: the corpus should NOT be able to answer — tests the "I don't know" gate.
+# `history`: prior turns; the follow-up is condensed to a standalone question first
+#            and scored as a separate "Follow-up hit-rate" row.
 
 - question: "What item does Great Tusk most commonly run in Gen 9 OU?"
   expect_source: "gen9ou_chaos#Great Tusk"
@@ -13,3 +15,12 @@
 
 - question: "What is the capital of France?"
   no_answer: true
+
+- question: "What about Kingambit?"
+  history:
+    - role: user
+      content: "What item does Great Tusk most commonly run in Gen 9 OU?"
+    - role: assistant
+      content: "In Gen 9 OU, Great Tusk most commonly runs Heavy-Duty Boots [1]."
+  expect_source: "gen9ou_chaos#Kingambit"
+  expect_keywords: ["leftovers"]

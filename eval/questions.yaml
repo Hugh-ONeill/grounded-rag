@@ -330,3 +330,73 @@
 - question: "How should I play Zamazenta?"
   expect_source: "smogon#Zamazenta"
   expect_keywords: ["gen 9"]
+
+# ---- Conversational follow-ups (history -> condense -> route) ----
+# Each item's `history` is a prior transcript; the harness condenses the follow-up
+# into a standalone question first, then scores retrieval as usual. Scored as a
+# separate "Follow-up hit-rate" row.
+- question: "What about Gholdengo?"
+  history:
+    - role: user
+      content: "What item does Kingambit most commonly run in Gen 9 OU?"
+    - role: assistant
+      content: "In Gen 9 OU, Kingambit most commonly holds Leftovers [1]."
+  expect_source: "gen9ou_chaos#Gholdengo"
+  expect_keywords: ["balloon"]
+
+- question: "What moves does it usually run?"
+  history:
+    - role: user
+      content: "Which item does Dragapult run most often?"
+    - role: assistant
+      content: "In Gen 9 OU, Dragapult most often runs Choice Specs [1]."
+  expect_source: "gen9ou_chaos#Dragapult"
+  expect_keywords: []
+
+# referent lives in the ASSISTANT turn, not the user's question
+- question: "What item does it usually hold?"
+  history:
+    - role: user
+      content: "What is the most used Pokemon in Gen 9 OU?"
+    - role: assistant
+      content: "In Gen 9 OU, the most used Pokemon is Kingambit [1]."
+  expect_source: "gen9ou_chaos#Kingambit"
+  expect_keywords: ["leftovers"]
+
+# condensed question must still route into the type-matchup tool
+- question: "Is it weak to Fighting?"
+  history:
+    - role: user
+      content: "What item does Kingambit most commonly run in Gen 9 OU?"
+    - role: assistant
+      content: "In Gen 9 OU, Kingambit most commonly holds Leftovers [1]."
+  expect_source: "tool#type_matchup"
+  expect_keywords: ["super effective"]
+
+# condensed question must name both mons to hit the speed tool
+- question: "Which of the two is faster?"
+  history:
+    - role: user
+      content: "Does standard Kingambit's Sucker Punch OHKO standard Dragapult?"
+    - role: assistant
+      content: "In Gen 9 OU, standard Kingambit's Sucker Punch is not a guaranteed OHKO on standard Dragapult [1]."
+  expect_source: "tool#speed_check"
+  expect_keywords: ["dragapult"]
+
+- question: "What commonly counters it?"
+  history:
+    - role: user
+      content: "How should I play Great Tusk in Gen 9 OU?"
+    - role: assistant
+      content: "In Gen 9 OU, Great Tusk is a hazard-control pivot that spins with Rapid Spin [1]."
+  expect_source: "gen9ou_chaos#Great Tusk"
+  expect_keywords: []
+
+# an off-topic follow-up must still hit the refusal gate, on-topic history or not
+- question: "What about its stock price?"
+  history:
+    - role: user
+      content: "What item does Kingambit most commonly run in Gen 9 OU?"
+    - role: assistant
+      content: "In Gen 9 OU, Kingambit most commonly holds Leftovers [1]."
+  no_answer: true
