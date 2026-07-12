@@ -29,7 +29,12 @@ def _top(d: dict, denom: float, n: int = 8, min_pct: float = 3.0):
 
 
 def _species_doc(name: str, s: dict, fmt: str, types: dict):
-    raw = s.get("Raw count") or 1
+    # chaos dict values are WEIGHTED counts while "Raw count" is unweighted, so
+    # value/raw deflates every share. The weighted set count is the sum of any
+    # single-slot attribute (each set has exactly one ability), and value/that
+    # matches Smogon's published percentages.
+    raw = (sum(s.get("Abilities", {}).values()) or sum(s.get("Items", {}).values())
+           or s.get("Raw count") or 1)
     typ = " / ".join(types.get(name, [])) if types else ""
     lines = [f"{name}" + (f" ({typ}-type)" if typ else "") + f" — {fmt} usage data."]
     if s.get("usage") is not None:
