@@ -59,11 +59,12 @@ def _data():
 
     move_names = {r["move_id"]: r["name"] for r in rows("move_names")
                   if r["local_language_id"] == EN}
-    moves = {}  # lowercase move name -> (Name, type)
+    dmg_class2 = {r["id"]: r["identifier"] for r in rows("move_damage_classes")}
+    moves = {}  # lowercase move name -> (Name, type, class)
     for r in rows("moves"):
         name, typ = move_names.get(r["id"]), type_names.get(r["type_id"])
         if name and typ:
-            moves[name.lower()] = (name, typ)
+            moves[name.lower()] = (name, typ, dmg_class2.get(r["damage_class_id"], "?"))
 
     def pretty(ident):
         return "-".join(p.capitalize() for p in ident.split("-"))
@@ -229,24 +230,12 @@ def _level100_neutral(mon: dict, evs: dict | None = None, nature: tuple | None =
     return hp, o
 
 
-def damage_calc(attacker: str, move: str, defender: str,
-                attacker_mods: dict | None = None, defender_mods: dict | None = None,
-                weather: str = "none") -> list[dict]:
-    """Damage rolls for attacker using move into defender, via poke-engine.
-    Baseline: level 100, 31 IVs, 0 EVs, neutral natures, no items or abilities.
-    mods: {"item": str, "boosts": {stat: n}, "nature": (up, down),
-           "evs": {stat: n}, "status": "brn", "tera": type} per side."""
+def _calc_rolls(a: dict, move_name: str, b: dict, am: dict, dm: dict, weather: str):
+    """Engine damage core: returns (lo, hi, defender_max_hp), or (None, None, None)."""
     try:
         from poke_engine import State, Side, Pokemon, Move, Weather, calculate_damage
     except ImportError:
-        return []
-    am, dm = attacker_mods or {}, defender_mods or {}
-    d = _data()
-    a, b = d["mons"].get(attacker.lower()), d["mons"].get(defender.lower())
-    move_entry = d["moves"].get(move.lower())
-    if not a or not b or not move_entry:
-        return []
-    move_name = move_entry[0]
+        return None, None, None
 
     def build(m, mv, mods):
         hp, o = _level100_neutral(m, mods.get("evs"), mods.get("nature"))
@@ -279,11 +268,30 @@ def damage_calc(attacker: str, move: str, defender: str,
                   weather=Weather(weather),
                   weather_turns_remaining=-1 if weather != "none" else 0)
     rolls = calculate_damage(state, _engine_id(move_name), "tackle", True)[0]
-    if not rolls:
-        lo = hi = 0
-    else:
-        lo, hi = min(rolls), max(rolls)
+    lo, hi = (min(rolls), max(rolls)) if rolls else (0, 0)
     def_hp, _ = _level100_neutral(b, dm.get("evs"), dm.get("nature"))
+    return lo, hi, def_hp
+
+
+def damage_calc(attacker: str, move: str, defender: str,
+                attacker_mods: dict | None = None, defender_mods: dict | None = None,
+                weather: str = "none") -> list[dict]:
+    """Damage rolls for attacker using move into defender, via poke-engine.
+    Baseline: level 100, 31 IVs, 0 EVs, neutral natures, no items or abilities.
+    mods: {"item": str, "boosts": {stat: n}, "nature": (up, down),
+           "evs": {stat: n}, "status": "brn", "tera": type} per side."""
+    am, dm = attacker_mods or {}, defender_mods or {}
+    d = _data()
+    a, b = d["mons"].get(attacker.lower()), d["mons"].get(defender.lower())
+    move_entry = d["moves"].get(move.lower())
+    if not a or not b or not move_entry:
+        return []
+    move_name = move_entry[0]
+    lo, hi, def_hp = _calc_rolls(a, move_name, b, am, dm, weather)
+    if lo is None:
+        return []
+
+    # rolls computed in _calc_rolls (shared with ohko_search)
     lo_pct, hi_pct = 100 * lo / def_hp, 100 * hi / def_hp
     if lo >= def_hp:
         verdict = "a guaranteed OHKO"
@@ -319,3 +327,85 @@ def damage_calc(attacker: str, move: str, defender: str,
                f"{verdict}.{applied} Baseline assumptions unless stated: level 100, 31 IVs, "
                f"0 EVs, neutral natures, no items or abilities.")
     return [_passage("tool#damage_calc", f"{a['name']} {move_name} vs {b['name']}", content)]
+
+
+def ohko_search(attacker: str, move: str, defender: str) -> list[dict]:
+    """What would it take for attacker's move to OHKO defender? Applies levers
+    cumulatively, largest structural choices first (nature, then EVs, then item,
+    then battle state), recomputing true engine rolls at each rung. IVs are
+    always assumed perfect (31)."""
+    d = _data()
+    a, b = d["mons"].get(attacker.lower()), d["mons"].get(defender.lower())
+    entry = d["moves"].get(move.lower())
+    if not a or not b or not entry:
+        return []
+    move_name, move_type, move_cls = entry
+    if move_cls == "status":
+        return [_passage("tool#ohko_search", f"{move_name} OHKO analysis",
+                         f"{move_name} is a status move; it deals no damage and cannot OHKO.")]
+
+    phys = move_cls == "physical"
+    stat = "Attack" if phys else "Special Attack"
+    nature_name = "Adamant" if phys else "Modest"
+    item = "Choice Band" if phys else "Choice Specs"
+    weather = {"Fire": "sun", "Water": "rain"}.get(move_type)
+
+    am: dict = {}
+    baseline = _calc_rolls(a, move_name, b, am, {}, "none")
+    if baseline[0] is None:
+        return []
+    lo, hi, def_hp = baseline
+    header = (f"OHKO analysis via the poke-engine battle engine: {a['name']}'s {move_name} "
+              f"vs {b['name']} (both level 100, 31 IVs; defender uninvested).")
+    if lo >= def_hp:
+        return [_passage("tool#ohko_search", f"{a['name']} {move_name} vs {b['name']}",
+                         f"{header} Already a guaranteed OHKO with no investment: "
+                         f"{lo}-{hi} damage ({100*lo/def_hp:.0f}-{100*hi/def_hp:.0f}% of {def_hp} HP).")]
+    if hi == 0:
+        return [_passage("tool#ohko_search", f"{a['name']} {move_name} vs {b['name']}",
+                         f"{header} {move_name} does no damage: {b['name']} is immune. No amount "
+                         f"of offensive investment fixes an immunity; it must be removed by game "
+                         f"state (for a Ground immunity: Gravity, Smack Down, or an Iron Ball).")]
+
+    lines = [header,
+             f"Baseline (neutral nature, no EVs, no item): {lo}-{hi} ({100*lo/def_hp:.0f}-{100*hi/def_hp:.0f}%): not an OHKO.",
+             "Escalation, largest levers first:"]
+    steps = [(f"{nature_name} nature", lambda: am.update(nature=(stat, "Speed"))),
+             (f"252 {stat} EVs", lambda: am.update(evs={stat: 252})),
+             (item, lambda: am.update(item=item))]
+    if weather:
+        steps.append((f"in {weather}", None))
+    steps.append((f"Tera {move_type}", lambda: am.update(tera=move_type.lower())))
+    for n in (1, 2, 3, 4, 6):
+        steps.append((f"+{n} {stat}", lambda n=n: am.update(boosts={stat: n})))
+
+    wx = "none"
+    guaranteed_at = None
+    possible_at = ["no investment (high roll)"] if hi >= def_hp else None
+    applied = []
+    for label, apply in steps:
+        if apply:
+            apply()
+        else:
+            wx = weather
+        applied.append(label)
+        lo, hi, def_hp = _calc_rolls(a, move_name, b, am, {}, wx)
+        pct = f"{100*lo/def_hp:.0f}-{100*hi/def_hp:.0f}%"
+        if possible_at is None and hi >= def_hp:
+            possible_at = list(applied)
+        if lo >= def_hp:
+            guaranteed_at = list(applied)
+            lines.append(f"- + {label}: {lo}-{hi} ({pct}): guaranteed OHKO.")
+            break
+        lines.append(f"- + {label}: {lo}-{hi} ({pct})")
+    if guaranteed_at:
+        lines.append(f"Verdict: guaranteed OHKO requires {', '.join(guaranteed_at)} (applied cumulatively).")
+        if possible_at and possible_at != guaranteed_at:
+            lines.append(f"A high roll can OHKO from {', '.join(possible_at)}.")
+    elif possible_at:
+        lines.append(f"Verdict: only a high-roll OHKO is possible, from {', '.join(possible_at)}; "
+                     f"never guaranteed with these levers.")
+    else:
+        lines.append("Verdict: not an OHKO even with maximum investment, item, weather, Tera, "
+                     "and +6; this move cannot OHKO this target one-on-one.")
+    return [_passage("tool#ohko_search", f"{a['name']} {move_name} vs {b['name']}", "\n".join(lines))]

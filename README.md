@@ -111,7 +111,12 @@ retrieved text. Damage questions ("Does Garchomp's Earthquake OHKO Heatran?") go
 deeper: they run through the [poke-engine](https://github.com/pmariglia/poke-engine) battle
 engine (the same Rust engine behind the crystal-battle agent), with real base stats and
 stated assumptions (level 100, neutral spreads, no items or abilities), returning true damage
-rolls and n-HKO verdicts. The tools also carry the conditional mechanics a raw type chart misses: a
+rolls and n-HKO verdicts. Battle state is parsed from the question (boosts, setup moves,
+items, natures, EV spreads, burn, weather, Tera), and "what would it take to OHKO?" questions
+run a tiered escalation search: levers are applied cumulatively, largest structural choices
+first (nature, then EVs with IVs always assumed perfect, then item, then weather, Tera, and
+boosts), recomputing engine rolls at each rung until the KO is guaranteed, with immunities
+correctly reported as unfixable by investment. The tools also carry the conditional mechanics a raw type chart misses: a
 Ground-vs-Flying immunity is reported together with its Gravity/Smack Down/Iron Ball and
 Roost variants (with recomputed multipliers), and ability-based immunities like Levitate are
 flagged from data. Deliberately not LLM function-calling: the router is a dozen lines of
@@ -128,16 +133,17 @@ the moment the corpus grew past what the vector leg could carry alone.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 57 gold questions (54 answerable, covering
+Run it yourself: `python -m eval.run_eval`. Over 63 gold questions (60 answerable, covering
 usage stats, corpus-wide aggregations, stat superlatives, species data, moves, abilities,
 items, learnsets, in-context comparisons, usage-versus-movepool intent, and computed answers:
-type matchups with conditional immunities, speed checks, typed stat queries, and engine
-damage calculations, plus 3 deliberately unanswerable), the current build scores:
+type matchups with conditional immunities, speed checks, typed stat queries, battle-state-aware
+engine damage calculations, and tiered OHKO escalation searches, plus 3 deliberately
+unanswerable), the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (54/54) |
-| Answer faithfulness | 100% (50/50) |
+| Retrieval hit-rate@k | 100% (60/60) |
+| Answer faithfulness | 100% (56/56) |
 | Refusal precision (no-answer) | 100% (3/3) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
@@ -201,7 +207,8 @@ python -m venv .venv && .venv/bin/pip install -e ./api
 - [x] Cross-encoder reranking, now also scoring the refusal gate
 - [x] Question router + deterministic tools (type matchups with conditional immunities, speed checks, stat queries)
 - [x] poke-engine damage calculator tool (neutral spreads, true engine rolls, n-HKO verdicts)
-- [ ] Battle-state-aware calc inputs: boosts, items, abilities, weather, custom spreads
+- [x] Battle-state-aware calc inputs: boosts, setup moves, items, natures, EVs, burn, weather, Tera
+- [x] Tiered OHKO escalation search ("what would it take to OHKO?")
 - [ ] Monotype moveset tables and replay ingestion for the crystal-battle corpus
 - [ ] Validate the k8s manifests end to end
 - [ ] Query rewriting, conversation memory

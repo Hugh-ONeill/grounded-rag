@@ -21,6 +21,8 @@ _MATCHUP = re.compile(
 _SPEED_VS = re.compile(r"\bfaster\b|\boutspeeds?\b|\bslower\b", re.I)
 _SUPERLATIVE = re.compile(r"\b(fastest|slowest|highest|lowest|best|most|bulkiest)\b", re.I)
 _DAMAGE = re.compile(r"\bohko\b|\b\dhko\b|how much damage|damage does|\bkill\b", re.I)
+_OHKO_HOW = re.compile(
+    r"(?:what would|what does|what do|how (?:can|could|do)|needs?|needed|required?|take[s]? (?:for|to)|make).{0,60}\bohko\b", re.I)
 
 # battle-state modifiers, parsed out of the question BEFORE move detection so
 # "after a Swords Dance" is a boost, not the attacking move
@@ -147,7 +149,7 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
     if _MATCHUP.search(question):
         moves = _find_moves(question)
         if mons and moves:
-            name, typ = tools.known_moves()[moves[0]]
+            name, typ, _cls = tools.known_moves()[moves[0]]
             return tools.type_matchup(typ, mons[0], via_move=name)
         if mons and types:
             return tools.type_matchup(types[0], mons[0])
@@ -157,6 +159,24 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
             return tools.type_matchup(types[0], types[1])
         if len(types) == 1:
             return tools.defensive_profile(types[0])
+
+    # "what would it take for X's Y to OHKO Z" -> tiered escalation search
+    if _OHKO_HOW.search(question) and len(mons) >= 2:
+        moves = _find_moves(question)
+        if moves:
+            q2 = question.lower()
+            to_m = re.search(r"\b(?:to )?ohko\s+([a-z0-9' -]+)", q2)
+            defender = next((m for m in mons if to_m and m in to_m.group(1)), None)
+            if defender is None:
+                move_pos = q2.find(moves[0])
+                attacker = min(mons, key=lambda m: abs(q2.find(m) - move_pos))
+                defender = next(m for m in mons if m != attacker)
+            else:
+                attacker = next(m for m in mons if m != defender)
+            name = tools.known_moves()[moves[0]][0]
+            p = tools.ohko_search(attacker, name, defender)
+            if p:
+                return p
 
     # "does Garchomp's Earthquake OHKO Heatran" / "how much damage does X's Y do to Z"
     # with optional battle state: boosts, items, natures, EVs, burn, weather, tera
@@ -172,7 +192,7 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
             else:
                 attacker = min(mons, key=lambda m: abs(q.find(m) - move_pos))
                 defender = next(m for m in mons if m != attacker)
-            name, _ = tools.known_moves()[moves[0]]
+            name = tools.known_moves()[moves[0]][0]
             p = tools.damage_calc(attacker, name, defender, atk_mods, def_mods, weather)
             if p:
                 return p
