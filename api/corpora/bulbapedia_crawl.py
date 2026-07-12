@@ -28,6 +28,13 @@ UA = "grounded-rag-crawler/0.1 (personal research project; https://github.com/Hu
 DELAY = 2.0        # seconds between requests
 BATCH = 20         # titles per API request (50 is the hard limit; stay modest)
 
+GENERAL_PAGES = [
+    "Pokémon", "Pokémon world", "Pokémon Trainer", "Pokédex", "Pokémon battle",
+    "Evolution", "Legendary Pokémon", "Mythical Pokémon", "Regional form",
+    "Starter Pokémon", "Poké Ball", "Gym", "Pokémon League", "Move", "Egg",
+    "Level", "Friendship", "Baby Pokémon", "Pseudo-legendary Pokémon",
+]
+
 MECHANICS_PAGES = [
     "Damage", "Stat", "Type", "Status condition", "Weather", "Terrain",
     "Entry hazard", "Priority", "Critical hit", "Same-type attack bonus",
@@ -65,7 +72,7 @@ def _full_titles() -> list[str]:
             yield from csv.DictReader(f)
 
     EN = "9"
-    titles = list(MECHANICS_PAGES)
+    titles = list(GENERAL_PAGES) + list(MECHANICS_PAGES)
     species = {r["pokemon_species_id"]: r["name"] for r in rows("pokemon_species_names")
                if r["local_language_id"] == EN}
     titles += [f"{n} (Pokémon)" for n in species.values()]
@@ -129,4 +136,4 @@ if __name__ == "__main__":
     if args.full:
         crawl(_full_titles())
     else:
-        crawl(MECHANICS_PAGES + PILOT_EXTRA)
+        crawl(GENERAL_PAGES + MECHANICS_PAGES + PILOT_EXTRA)
