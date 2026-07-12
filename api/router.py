@@ -278,7 +278,8 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
     # "what counters/checks X" is a competitive-usage question: scope it to the
     # usage-stats corpus (the Counter move and X's own biology pages otherwise
     # crowd out the checks-and-counters data), falling through when it has nothing
-    if re.search(r"\bcounters?\b|\bchecks?\b", question, re.I) and mons and corpus is None:
+    if re.search(r"\bcounters?\b|\bchecks?\b|most used|most common(?:ly)?|usually|\busage\b"
+                 r"|almost every|good answers to", question, re.I) and corpus is None:
         scoped = await retrieve_hybrid(question, corpus="crystal_battle")
         if scoped and passes_threshold(scoped):
             return scoped

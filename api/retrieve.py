@@ -145,7 +145,7 @@ async def retrieve_hybrid(question: str, k: int | None = None, corpus: str | Non
     # starves the answer of its other sources. Cap chunks per page, backfill if short.
     picked, overflow, per_page = [], [], {}
     for p in reranked:
-        page = (p.get("source") or "").split(" §")[0]
+        page = (p.get("source") or "").split(" §")[0].split(" — ")[0]
         if per_page.get(page, 0) < 2:
             per_page[page] = per_page.get(page, 0) + 1
             picked.append(p)
