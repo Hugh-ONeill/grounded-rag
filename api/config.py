@@ -16,10 +16,14 @@ class Settings(BaseSettings):
 
     chunk_size: int = 900
     chunk_overlap: int = 150
-    top_k: int = 5
-    # Tuned via eval/: nomic-embed cosine sims run hot (on-topic ~0.64-0.78,
-    # off-topic ~0.40-0.54). 0.30 never fires; 0.60 splits the two cleanly.
-    min_similarity: float = 0.60
+    # 8, not 5: with multiple corpora, near-duplicate docs (a species' learnset,
+    # pokedex entry, usage stats) crowd the top ranks; k=5 starved the generator
+    top_k: int = 8
+    # Tuned via eval/, re-tuned when the corpus grew 10x: on-topic top-1 sims run
+    # 0.67-0.84, off-topic up to 0.65 (topically-adjacent chunks creep up as the
+    # corpus grows; the margin narrowed from ~0.10 to ~0.02). A score-based gate
+    # (reranker) is the durable fix -- see roadmap.
+    min_similarity: float = 0.66
 
     # nomic-embed-text is 768-dim. Change if you swap embedding models.
     embed_dim: int = 768

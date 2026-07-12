@@ -56,13 +56,17 @@ at something a reader can actually check, rather than "page 37 of a blob".
 single chunk, so retrieved passages carry complete fact blocks. Simple character windows stay
 until the eval shows they are the weak link.
 
-**The "I don't know" threshold is tuned, not guessed.** The gate refuses when top-1 cosine
-similarity falls below `MIN_SIMILARITY`. It was first set to 0.30, and the eval immediately
-reported 0% refusal precision: cosine similarities from `nomic-embed-text` run hot, and even
-"What is the capital of France?" retrieves at 0.40 against this corpus. Measured over the gold
-set, on-topic questions score 0.64 to 0.78 and off-topic ones 0.40 to 0.54, so the threshold
-now sits at 0.60, inside the clean gap between the two bands. This is the project's thesis in
-miniature: without an eval, the gate would have silently never fired.
+**The "I don't know" threshold is tuned, not guessed, and re-tuned as the corpus grows.**
+The gate refuses when top-1 cosine similarity falls below `MIN_SIMILARITY`. It was first set
+to 0.30, and the eval immediately reported 0% refusal precision: cosine similarities from
+`nomic-embed-text` run hot, and even "What is the capital of France?" retrieves at 0.40.
+Measured bands on the first corpus (on-topic 0.64 to 0.78, off-topic 0.40 to 0.54) put the
+threshold at 0.60. Then the corpus grew 10x with the PokeAPI adapter and the eval caught the
+gate breaking again: "What is the boiling point of water?" started retrieving Hydro Steam, a
+Water-type move about boiling water, at 0.649. The threshold now sits at 0.66, but the margin
+between bands narrowed from ~0.10 to ~0.02, which is the measured argument for replacing the
+raw-similarity gate with a reranker score (roadmap). Without an eval, none of this drift would
+have been visible.
 
 **Aggregation questions get synthetic rankings documents.** "What is the most used Pokemon?"
 is a corpus-wide comparison, and no single species chunk contains the answer, so top-k
@@ -79,20 +83,23 @@ as `[n]`, and is instructed to refuse rather than invent. Thinking mode is disab
 (`think: false`): factual extraction does not benefit from it and it is roughly 10x slower
 for this shape of answer.
 
-**Retrieval is deliberately simple, for now.** Pure vector search already scores 100%
-hit-rate@5 on the current gold set, so hybrid retrieval and reranking wait until a corpus or
-question set exposes an actual vector-only failure, rather than being added for the buzzwords.
+**Retrieval is deliberately simple, and the cracks are now measured.** Pure vector search
+still scores 100% hit-rate on the gold set, but the multi-corpus index showed the first real
+strain: a species' learnset, Pokedex, and usage-stats documents are near-neighbors of each
+other, so top-5 filled with same-family documents and starved the generator of the right one
+(fixed for now by k=8), and the refusal margin thinned as topically-adjacent chunks crept up.
+Hybrid retrieval and reranking are next, justified by measurements instead of buzzwords.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 30 gold questions grounded in real Smogon
-usage data (27 answerable, including corpus-wide aggregations, and 3 deliberately
-unanswerable), the current build scores:
+Run it yourself: `python -m eval.run_eval`. Over 37 gold questions spanning both corpora
+(34 answerable, covering usage stats, corpus-wide aggregations, species data, moves,
+abilities, and learnsets, plus 3 deliberately unanswerable), the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (27/27) |
-| Answer faithfulness | 100% (24/24) |
+| Retrieval hit-rate@k | 100% (34/34) |
+| Answer faithfulness | 100% (31/31) |
 | Refusal precision (no-answer) | 100% (3/3) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
@@ -103,7 +110,9 @@ Gold questions live in [eval/questions.yaml](eval/questions.yaml).
 
 ## Corpora
 
-The engine is corpus-agnostic via a small [`CorpusLoader`](api/corpora/base.py) interface.
+The engine is corpus-agnostic via a small [`CorpusLoader`](api/corpora/base.py) interface,
+and the index is multi-corpus: every chunk carries a corpus tag, ingest rebuilds one corpus
+at a time, and retrieval (and the `/ask` API) can optionally scope to a single corpus.
 Shipped adapters:
 
 - **`markdown_dir`**: point it at any folder of `.md` / `.txt` files.
@@ -112,13 +121,17 @@ Shipped adapters:
   example team builds, extracted from the [crystal-battle](https://github.com/Hugh-ONeill/crystal-battle)
   project. Ask *"What item does Kingambit most commonly run?"* and get a cited answer from
   actual ladder data.
+- **`pokeapi`**: general Pokemon knowledge from the [PokeAPI](https://github.com/PokeAPI/pokeapi)
+  CSV dataset: one citable document per species (types, base stats, abilities, Pokedex
+  entries), per move, per ability, and per learnset. ~3,900 documents; a sparse checkout of
+  just `data/v2/csv` is enough (see `.env.example`).
 
 ## Run it
 
 ```bash
-cp .env.example .env            # set CORPUS, OLLAMA_HOST, model names
+cp .env.example .env            # set OLLAMA_HOST, model names, corpus paths
 docker compose up -d                       # postgres+pgvector, api, web
-docker compose exec api python -m ingest   # build the index from the configured corpus
+docker compose exec api python -m ingest crystal_battle pokeapi   # build the index
 # open http://localhost:5173
 ```
 
@@ -127,7 +140,7 @@ No Docker? Any Postgres with the pgvector extension works:
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ./api
 # point DATABASE_URL in .env at your Postgres, then:
-.venv/bin/python api/ingest.py
+.venv/bin/python api/ingest.py crystal_battle pokeapi
 .venv/bin/uvicorn --app-dir api main:app --port 8000
 .venv/bin/python -m eval.run_eval
 ```
