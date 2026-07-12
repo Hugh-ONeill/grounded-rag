@@ -135,6 +135,17 @@ flagged from data. Deliberately not LLM function-calling: the router is a dozen 
 rules that cannot hallucinate a tool call, and tool questions get gold answers with
 deterministic ground truth.
 
+**Every corpus growth breaks something measurable, and the eval finds it.** Adding the
+Bulbapedia corpus immediately produced two regressions. Generic mechanics pages seduced the
+reranker (a page defining "priority" outranked Kingambit's own stats for "what priority move
+does Kingambit carry"), fixed by an ordering-only boost for passages whose title carries one
+of the question's rare terms. And popular Pokemon names turned out to exceed the keyword leg's
+document-frequency ceiling, because every teammate list mentions them; the ceiling was also
+computed against the wrong denominator (the max lexeme frequency rather than the document
+count). The boost deliberately does not feed the refusal gate: a first attempt that did let
+"Point Card" open the gate for a question about boiling points, and refusal precision fell to
+33% until ordering and gating were separated.
+
 **Postgres full-text search has no IDF, so term selection supplies it.** First contact with
 the keyword leg was a flood: for "What is Garganacl's most used move?", OR-querying every
 question word made 900 move documents title-match the word "move", and ts_rank scores a title
@@ -145,17 +156,18 @@ the moment the corpus grew past what the vector leg could carry alone.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 70 gold questions (67 answerable, covering
+Run it yourself: `python -m eval.run_eval`. Over 73 gold questions (70 answerable, covering
 usage stats, corpus-wide aggregations, stat superlatives, species data, moves, abilities,
-items, learnsets, in-context comparisons, usage-versus-movepool intent, and computed answers:
+items, learnsets, encyclopedic prose, in-context comparisons, usage-versus-movepool intent,
+and computed answers:
 type matchups with conditional immunities, speed checks, typed stat queries, battle-state-aware
 engine damage calculations, and tiered OHKO and survival escalation searches, plus 3
 deliberately unanswerable), the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (67/67) |
-| Answer faithfulness | 100% (63/63) |
+| Retrieval hit-rate@k | 100% (70/70) |
+| Answer faithfulness | 100% (64/64) |
 | Refusal precision (no-answer) | 100% (3/3) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
@@ -177,6 +189,13 @@ Shipped adapters:
   example team builds, extracted from the [crystal-battle](https://github.com/Hugh-ONeill/crystal-battle)
   project. Ask *"What item does Kingambit most commonly run?"* and get a cited answer from
   actual ladder data.
+- **`bulbapedia`**: encyclopedic prose from [Bulbapedia](https://bulbapedia.bulbagarden.net/),
+  read from a local cache written by a polite crawler (`python api/corpora/bulbapedia_crawl.py`,
+  batched MediaWiki API queries, maxlag cooperation, descriptive User-Agent, resumable cache).
+  Section-level filtering keeps the knowledge (lead, Biology, Effect, mechanics pages) and
+  drops anime episodes, TCG, galleries, and sprites. Bulbapedia content is CC BY-NC-SA 2.5:
+  the cache never ships, every document carries its source URL, and this stays a local
+  personal-use corpus.
 - **`pokeapi`**: general Pokemon knowledge from the [PokeAPI](https://github.com/PokeAPI/pokeapi)
   CSV dataset: one citable document per species (types, base stats, abilities, Pokedex
   entries), per move, per ability, per item, and per learnset. ~4,500 documents; a sparse
