@@ -1,0 +1,131 @@
+# Gold questions for grounded-rag, grounded in real gen9ou_chaos.json usage data.
+# Keywords are deliberately short substrings so they match whether the model writes
+# "boosterenergy" (raw) or "Booster Energy" (normalized).
+#   expect_source   : substring that should appear in a retrieved chunk's source (retrieval check)
+#   expect_keywords : terms the answer should contain (faithfulness proxy); [] = retrieval-only
+#   no_answer: true : corpus should NOT answer -> tests the "I don't know" gate
+
+# ---- Items ----
+- question: "What item does Kingambit most commonly run in Gen 9 OU?"
+  expect_source: "gen9ou_chaos#Kingambit"
+  expect_keywords: ["leftovers"]
+
+- question: "What is Gholdengo's most common held item?"
+  expect_source: "gen9ou_chaos#Gholdengo"
+  expect_keywords: ["balloon"]
+
+- question: "Which item does Dragapult run most often?"
+  expect_source: "gen9ou_chaos#Dragapult"
+  expect_keywords: ["specs"]
+
+- question: "What item is most common on Landorus-Therian?"
+  expect_source: "gen9ou_chaos#Landorus-Therian"
+  expect_keywords: ["helmet"]
+
+- question: "What item does Ogerpon-Wellspring hold?"
+  expect_source: "gen9ou_chaos#Ogerpon-Wellspring"
+  expect_keywords: ["mask"]
+
+- question: "What is the most common item on Iron Valiant?"
+  expect_source: "gen9ou_chaos#Iron Valiant"
+  expect_keywords: ["booster"]
+
+# ---- Moves ----
+- question: "What is Great Tusk's most common move in Gen 9 OU?"
+  expect_source: "gen9ou_chaos#Great Tusk"
+  expect_keywords: ["spin"]
+
+- question: "What priority move does Kingambit usually carry?"
+  expect_source: "gen9ou_chaos#Kingambit"
+  expect_keywords: ["sucker"]
+
+- question: "What is Ogerpon-Wellspring's most common attacking move?"
+  expect_source: "gen9ou_chaos#Ogerpon-Wellspring"
+  expect_keywords: ["ivy"]
+
+- question: "What priority move does Raging Bolt run?"
+  expect_source: "gen9ou_chaos#Raging Bolt"
+  expect_keywords: ["thunderclap"]
+
+- question: "What pivoting move does Slowking-Galar commonly use?"
+  expect_source: "gen9ou_chaos#Slowking-Galar"
+  expect_keywords: ["chilly"]
+
+- question: "What is Garganacl's most used move?"
+  expect_source: "gen9ou_chaos#Garganacl"
+  expect_keywords: ["salt"]
+
+- question: "Which moves does Ting-Lu commonly run?"
+  expect_source: "gen9ou_chaos#Ting-Lu"
+  expect_keywords: ["ruination"]
+
+# ---- Abilities ----
+- question: "What is Gholdengo's ability?"
+  expect_source: "gen9ou_chaos#Gholdengo"
+  expect_keywords: ["gold"]
+
+- question: "What ability does Zamazenta have in Gen 9 OU?"
+  expect_source: "gen9ou_chaos#Zamazenta"
+  expect_keywords: ["dauntless"]
+
+- question: "What is Ting-Lu's ability?"
+  expect_source: "gen9ou_chaos#Ting-Lu"
+  expect_keywords: ["vessel"]
+
+- question: "What is Slowking-Galar's most common ability?"
+  expect_source: "gen9ou_chaos#Slowking-Galar"
+  expect_keywords: ["regenerator"]
+
+- question: "What ability does Iron Moth use?"
+  expect_source: "gen9ou_chaos#Iron Moth"
+  expect_keywords: ["quark"]
+
+# ---- Tera types ----
+- question: "What Tera type does Zamazenta most commonly use?"
+  expect_source: "gen9ou_chaos#Zamazenta"
+  expect_keywords: ["fire"]
+
+- question: "What is Raging Bolt's most common Tera type?"
+  expect_source: "gen9ou_chaos#Raging Bolt"
+  expect_keywords: ["fairy"]
+
+# ---- Usage ----
+- question: "How much of the Gen 9 OU ladder uses Great Tusk?"
+  expect_source: "gen9ou_chaos#Great Tusk"
+  expect_keywords: ["32"]
+
+# ---- Checks & counters (retrieval-only; answer phrasing varies) ----
+- question: "What checks or counters Great Tusk?"
+  expect_source: "gen9ou_chaos#Great Tusk"
+  expect_keywords: []
+
+- question: "What are good answers to Gholdengo?"
+  expect_source: "gen9ou_chaos#Gholdengo"
+  expect_keywords: []
+
+- question: "What counters Kingambit?"
+  expect_source: "gen9ou_chaos#Kingambit"
+  expect_keywords: []
+
+# ---- No-answer (the corpus is Pokemon usage data; these should be refused) ----
+- question: "What is the capital of France?"
+  no_answer: true
+
+- question: "Who won the 2019 World Series?"
+  no_answer: true
+
+- question: "What is the boiling point of water in Fahrenheit?"
+  no_answer: true
+
+# ---- Aggregations (answered by the synthetic usage-rankings documents) ----
+- question: "What is the most used Pokemon in Gen 2 OU?"
+  expect_source: "gen2ou_chaos#usage_rankings"
+  expect_keywords: ["snorlax"]
+
+- question: "What is the most used Pokemon in Gen 9 OU?"
+  expect_source: "gen9ou_chaos#usage_rankings"
+  expect_keywords: ["great tusk"]
+
+- question: "Which Pokemon appears on almost every Gen 2 OU team?"
+  expect_source: "gen2ou_chaos#usage_rankings"
+  expect_keywords: ["snorlax"]

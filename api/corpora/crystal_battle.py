@@ -59,6 +59,28 @@ def _species_doc(name: str, s: dict, fmt: str, types: dict):
     }
 
 
+def _rankings_doc(fmt: str, data: dict):
+    """Synthetic aggregation document. Top-k similarity retrieval cannot answer
+    corpus-wide superlatives ("what is the most used Pokemon?"): no single species
+    chunk contains the comparison. So the ranking is emitted as its own citable
+    document, which the phrasing of such questions retrieves naturally."""
+    ranked = sorted(data.items(), key=lambda kv: kv[1].get("usage") or 0, reverse=True)[:30]
+    if not ranked:
+        return None
+    top_name, top_stats = ranked[0]
+    lines = [
+        f"{fmt} usage rankings: the most used Pokemon in {fmt}, ranked by share of teams.",
+        f"The most used Pokemon in {fmt} is {top_name}, on {100*(top_stats.get('usage') or 0):.1f}% of teams.",
+    ]
+    lines += [f"{i}. {n} ({100*(s.get('usage') or 0):.1f}%)" for i, (n, s) in enumerate(ranked, 1)]
+    return {
+        "source": f"{fmt}_chaos#usage_rankings",
+        "title": f"{fmt} usage rankings",
+        "content": "\n".join(lines),
+        "metadata": {"kind": "usage_rankings", "format": fmt},
+    }
+
+
 def load():
     root = Path(settings.crystal_battle_path)
     if not root.exists():
@@ -76,6 +98,9 @@ def load():
         data = json.loads(chaos.read_text()).get("data", {})
         for name, s in data.items():
             yield _species_doc(name, s, fmt, types)
+        rankings = _rankings_doc(fmt, data)
+        if rankings:
+            yield rankings
 
     # 2) Per-type monotype moveset tables (raw text is already human-readable)
     for txt in (root / "monotype" / "smogon_stats").glob("*.txt"):
