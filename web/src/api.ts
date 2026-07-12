@@ -1,7 +1,9 @@
 // Thin client for the streaming /ask endpoint. Parses the SSE stream:
-//   event: sources -> the retrieved citations (render as chips)
-//   event: token   -> answer text, appended as it arrives
-//   event: done    -> stream complete
+//   event: question -> follow-up rewritten as a standalone question (shown so the
+//                      user can see what was actually retrieved)
+//   event: sources  -> the retrieved citations (render as chips)
+//   event: token    -> answer text, appended as it arrives
+//   event: done     -> stream complete
 export interface Source {
   source: string;
   title: string;
@@ -9,17 +11,26 @@ export interface Source {
   similarity: number;
 }
 
+// A prior conversation turn. The server is stateless: the transcript rides along
+// in each request and is only used to condense follow-ups before retrieval.
+export interface Turn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 export async function ask(
   question: string,
+  history: Turn[],
   onSources: (s: Source[]) => void,
-  onToken: (t: string) => void
+  onToken: (t: string) => void,
+  onQuestion?: (standalone: string) => void
 ): Promise<void> {
   const res = await fetch(`${API}/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, history }),
   });
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
@@ -36,6 +47,7 @@ export async function ask(
       if (!type || data === undefined) continue;
       if (type === "sources") onSources(JSON.parse(data));
       else if (type === "token") onToken(JSON.parse(data));
+      else if (type === "question") onQuestion?.(JSON.parse(data).standalone);
     }
   }
 }
