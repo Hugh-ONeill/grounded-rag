@@ -300,3 +300,16 @@
 - question: "Does Garchomp's Earthquake OHKO a bold max hp Milotic?"
   expect_source: "tool#damage_calc"
   expect_keywords: ["2-3hko"]
+
+# ---- Encyclopedic prose (bulbapedia corpus, pilot) ----
+- question: "What does Grassy Terrain do to Earthquake?"
+  expect_source: "bulbapedia#Grassy Terrain"
+  expect_keywords: ["halv"]
+
+- question: "What is Garchomp's behavior like in the wild?"
+  expect_source: "bulbapedia#Garchomp"
+  expect_keywords: []
+
+- question: "What is the Terastal phenomenon?"
+  expect_source: "bulbapedia#Terastal phenomenon"
+  expect_keywords: []

@@ -1,11 +1,12 @@
 """Corpus registry. Add an adapter, register it here, select it via CORPUS in .env."""
 from config import settings
-from . import markdown_dir, crystal_battle, pokeapi
+from . import markdown_dir, crystal_battle, pokeapi, bulbapedia
 
 _ADAPTERS = {
     "markdown_dir": markdown_dir.load,
     "crystal_battle": crystal_battle.load,
     "pokeapi": pokeapi.load,
+    "bulbapedia": bulbapedia.load,
 }
 
 
