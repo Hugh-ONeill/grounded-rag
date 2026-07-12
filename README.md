@@ -24,16 +24,14 @@ Every answer is grounded in numbered passages, so you can see exactly where it c
 ```
 Documents → Chunk (overlap + metadata) → Embed (Ollama) → Postgres + pgvector
                                                                │
-Query → Embed → Hybrid retrieve (vector + keyword, RRF) → "I don't know" gate
+Query → Embed → Hybrid retrieve (vector + keyword, RRF) → cross-encoder rerank → gate
                                                                │
                        Gemma (Ollama) + retrieved context → answer + [citations]
                                                                │
                                   eval/ harness → hit-rate@k, faithfulness, refusal
 ```
 
-Cross-encoder reranking is the remaining roadmap item; its signature is stubbed in
-[`api/retrieve.py`](api/retrieve.py). See [docs/architecture.md](docs/architecture.md) for
-the detailed flow.
+See [docs/architecture.md](docs/architecture.md) for the detailed flow.
 
 ## Stack & rationale
 
@@ -41,6 +39,7 @@ the detailed flow.
 |------|--------|-----|
 | Vector store | **Postgres + pgvector** | Production-grade, SQL-backed; not a throwaway in-memory store |
 | Embeddings | **`nomic-embed-text` (Ollama)** | Local, free, runs on one GPU |
+| Reranker | **ms-marco MiniLM cross-encoder** | Reads (question, passage) together; also scores the refusal gate |
 | LLM | **Gemma (Ollama)** | Local generation, no API cost |
 | Backend | **FastAPI** | Async, typed, streams responses (SSE) |
 | Frontend | **React + TypeScript (Vite)** | Streaming chat UI with cited sources |
@@ -66,11 +65,13 @@ gate breaking again: "What is the boiling point of water?" started retrieving Hy
 Water-type move about boiling water, at 0.649. The threshold moved to 0.66 and the margin
 between bands narrowed from ~0.10 to ~0.02. Then it closed entirely: "Is a Sitrus Berry better
 than an Oran Berry?" tops out at 0.639 while the boiling-point question reaches 0.649, so no
-similarity threshold can separate them. The gate now has a second signal: a strong weighted
-keyword match (an entity name hitting a document title) also opens it, with measured bands of
-its own (entity-named questions >=0.32, vocabulary coincidences <=0.18). A calibrated reranker
-score remains the roadmap endgame. Without an eval, none of this drift would have been
-visible.
+similarity threshold can separate them. The gate is now scored by the cross-encoder reranker,
+whose bands do separate (answerable questions bottom out at 0.099, off-topic tops at 0.059)
+and, unlike cosine bands, do not depend on how crowded the embedding space is. Model choice
+was measured too, with a surprise: tiny ms-marco MiniLM beats bge-reranker-v2-m3 here, because
+bge's off-topic floor (~0.50) sits inside its own answerable band while MiniLM pins off-topic
+pairs to 0.000. Keyword-rank and similarity thresholds survive as the fallback gate when the
+reranker is disabled. Without an eval, none of this drift would have been visible.
 
 **Aggregation questions get synthetic rankings documents.** "What is the most used Pokemon?"
 is a corpus-wide comparison, and no single species chunk contains the answer, so top-k
@@ -93,21 +94,29 @@ search carried a 100% hit-rate until the corpus grew and comparison questions ar
 phrasing dilutes the embedding below the refusal threshold, while an off-topic question with
 adjacent vocabulary scores higher. The keyword leg (Postgres full-text, titles weighted
 heaviest, OR semantics so multi-entity comparisons match) catches exactly what the vector leg
-dilutes; reciprocal rank fusion merges the two. The same keyword rank doubles as the gate's
-second signal. Comparisons between things in context are also explicitly permitted by the
-prompt, which previously blocked them along with corpus-wide superlatives.
+dilutes; reciprocal rank fusion merges the two, and the cross-encoder reorders the fused pool.
+Comparisons between things in context are also explicitly permitted by the prompt, which
+previously blocked them along with corpus-wide superlatives.
+
+**Postgres full-text search has no IDF, so term selection supplies it.** First contact with
+the keyword leg was a flood: for "What is Garganacl's most used move?", OR-querying every
+question word made 900 move documents title-match the word "move", and ts_rank scores a title
+hit on generic "move" identically to one on rare "garganacl". The fix computes lexeme document
+frequencies once (ts_stat) and searches only the question's rarest terms, which is exactly the
+IDF weighting the built-in ranking lacks. The eval caught this as a real retrieval regression
+the moment the corpus grew past what the vector leg could carry alone.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 43 gold questions spanning both corpora
-(40 answerable, covering usage stats, corpus-wide aggregations, species data, moves,
-abilities, items, learnsets, and in-context comparisons, plus 3 deliberately unanswerable),
-the current build scores:
+Run it yourself: `python -m eval.run_eval`. Over 46 gold questions spanning both corpora
+(43 answerable, covering usage stats, corpus-wide aggregations, stat superlatives, species
+data, moves, abilities, items, learnsets, and in-context comparisons, plus 3 deliberately
+unanswerable), the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (40/40) |
-| Answer faithfulness | 100% (37/37) |
+| Retrieval hit-rate@k | 100% (43/43) |
+| Answer faithfulness | 100% (40/40) |
 | Refusal precision (no-answer) | 100% (3/3) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
@@ -163,7 +172,7 @@ python -m venv .venv && .venv/bin/pip install -e ./api
 - [x] "I don't know" threshold, tuned via the eval
 - [x] Eval harness with published numbers
 - [x] Hybrid retrieval (vector + weighted full-text, reciprocal rank fusion)
-- [ ] Cross-encoder reranking (also the durable replacement for the threshold gate)
+- [x] Cross-encoder reranking, now also scoring the refusal gate
 - [ ] Monotype moveset tables and replay ingestion for the crystal-battle corpus
 - [ ] Validate the k8s manifests end to end
 - [ ] Query rewriting, conversation memory
