@@ -326,3 +326,7 @@
 - question: "Does standard Kingambit's Sucker Punch OHKO standard Dragapult?"
   expect_source: "tool#damage_calc"
   expect_keywords: ["ohko"]
+
+- question: "How should I play Zamazenta?"
+  expect_source: "smogon#Zamazenta"
+  expect_keywords: ["gen 9"]

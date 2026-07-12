@@ -51,7 +51,11 @@ async def ingest_corpus(name: str) -> int:
         pending_text.clear()
 
     for d in docs:
-        for piece in chunk_text(d["content"], settings.chunk_size, settings.chunk_overlap):
+        for n, piece in enumerate(chunk_text(d["content"], settings.chunk_size,
+                                             settings.chunk_overlap)):
+            if n:  # continuation chunks keep their provenance: a mid-analysis
+                   # window otherwise carries no hint of what document it is
+                piece = f"{d['title']} (continued): {piece}"
             pending_meta.append({**d, "content": piece})
             pending_text.append(piece)
             total += 1

@@ -18,12 +18,22 @@ Pokemon) and the context contains passages for them, do compare them: use the nu
 passages and explain the trade-off. Facts within a single passage are always fine to answer
 directly. For Pokemon, "what moves does X use/run" asks about competitive usage statistics
 (prefer a usage-data passage when present); "what moves can X learn" asks about the
-movepool/learnset."""
+movepool/learnset. Competitive advice and usage statistics are format-specific: when answering
+from a competitive analysis or usage data, name the format and generation (like "In Gen 9 OU")
+in your first sentence; each passage states its format."""
 
 
 def _build_prompt(question: str, passages: list[dict]) -> str:
     ctx = "\n\n".join(f"[{i+1}] {p['content']}" for i, p in enumerate(passages))
-    return f"Context:\n{ctx}\n\nQuestion: {question}\n\nAnswer (with [n] citations):"
+    directive = ""
+    # format-specific advice must say its format; the instruction binds far better
+    # right next to the question than buried in the system prompt. Keyed on the
+    # passage's corpus, not its text: continuation chunks lack the header.
+    if any(p.get("corpus") in ("smogon", "crystal_battle")
+           or (p.get("source") or "").startswith(("smogon#", "gen9ou_chaos#", "gen2ou_chaos#"))
+           for p in passages):
+        directive = " Start your answer by naming the format this applies to (e.g. \"In Gen 9 OU, ...\")."
+    return f"Context:\n{ctx}\n\nQuestion: {question}\n\nAnswer (with [n] citations):{directive}"
 
 
 async def answer_stream(question: str, passages: list[dict]):

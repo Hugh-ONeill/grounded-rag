@@ -53,9 +53,12 @@ See [docs/architecture.md](docs/architecture.md) for the detailed flow.
 Pokemon's usage profile, one team paste), so a citation like `gen9ou_chaos#Kingambit` points
 at something a reader can actually check, rather than "page 37 of a blob".
 
-**Chunking is a 900-character window with 150 overlap.** Most per-species documents fit in a
-single chunk, so retrieved passages carry complete fact blocks. Simple character windows stay
-until the eval shows they are the weak link.
+**Chunking is a 900-character window with 150 overlap, and continuation chunks keep their
+provenance.** Most per-species documents fit in a single chunk, so retrieved passages carry
+complete fact blocks. The promised "until the eval shows chunking is the weak link" moment
+arrived with the long Smogon analyses: a mid-document window carried no hint of what document
+it came from, which starved the reranker and broke format attribution in answers. Every
+continuation chunk is now stamped with its document title at ingest.
 
 **The "I don't know" threshold is tuned, not guessed, and re-tuned as the corpus grows.**
 The gate refuses when top-1 cosine similarity falls below `MIN_SIMILARITY`. It was first set
@@ -159,7 +162,7 @@ the moment the corpus grew past what the vector leg could carry alone.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 76 gold questions (73 answerable, covering
+Run it yourself: `python -m eval.run_eval`. Over 77 gold questions (74 answerable, covering
 usage stats, corpus-wide aggregations, stat superlatives, species data, moves, abilities,
 items, learnsets, encyclopedic prose, competitive strategy, in-context comparisons,
 usage-versus-movepool intent,
@@ -170,8 +173,8 @@ deliberately unanswerable), the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (73/73) |
-| Answer faithfulness | 100% (65/65) |
+| Retrieval hit-rate@k | 100% (74/74) |
+| Answer faithfulness | 100% (66/66) |
 | Refusal precision (no-answer) | 100% (3/3) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
