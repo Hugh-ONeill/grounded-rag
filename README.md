@@ -24,7 +24,8 @@ Every answer is grounded in numbered passages, so you can see exactly where it c
 ```
 Documents → Chunk (overlap + metadata) → Embed (Ollama) → Postgres + pgvector
 
-Query → Router ── computed (matchup / speed / stat query)? → tools → pseudo-passages ──┐
+Query (follow-up? + history → standalone rewrite)
+  → Router ── computed (matchup / speed / stat query)? → tools → pseudo-passages ──────┐
            └── otherwise → Embed → Hybrid retrieve (RRF) → cross-encoder rerank → gate ┤
                                                                                        │
                               Gemma (Ollama) + passages → answer + [citations]
@@ -92,6 +93,26 @@ now covered by its own gold questions.
 as `[n]`, and is instructed to refuse rather than invent. Thinking mode is disabled
 (`think: false`): factual extraction does not benefit from it and it is roughly 10x slower
 for this shape of answer.
+
+**Conversational memory is a query rewrite, not server state.** Every stage of the pipeline
+(router rules, entity matching, embedding, the reranker gate) is keyed on the literal question
+text, so a follow-up like "what about its speed?" used to retrieve garbage or refuse. The fix
+is one step at the front: when a request carries chat history, Gemma condenses the follow-up
+into a standalone question ("Is it weak to Fighting?" → "Is Kingambit weak to Fighting?"),
+and everything downstream, including tool routing and the eval, still sees a single
+self-contained question, unchanged in meaning and tuning. Two deliberate constraints: the
+server holds no sessions (the transcript rides along in the request, so any frontend that
+owns its own conversation state, like an embedded companion or agent, can use `/ask` as a
+pure knowledge tool), and history never enters the answer prompt, so a prior answer can never
+become uncited evidence. The UI surfaces the rewrite as "searched as: ...", which makes
+condensation failures visible instead of silent, and the eval scores follow-ups as their own
+metric so single-turn numbers stay comparable. The follow-up gold questions immediately
+caught something real: "what about its stock price?" condenses to "what about Kingambit's
+stock price?", and a question that names a corpus entity scores that entity's own page right
+at the reranker's answerable floor. No retrieval signal can call it unanswerable, because
+the entity genuinely is in the corpus. Refusal turns out to be layered: the gate catches
+off-topic questions, and the strict grounding prompt catches on-entity questions the sources
+cannot answer. The refusal metric now accepts either layer and reports which one fired.
 
 **Hybrid retrieval was added when the measurements demanded it, not before.** Pure vector
 search carried a 100% hit-rate until the corpus grew and comparison questions arrived:
@@ -162,25 +183,31 @@ the moment the corpus grew past what the vector leg could carry alone.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 77 gold questions (74 answerable, covering
-usage stats, corpus-wide aggregations, stat superlatives, species data, moves, abilities,
-items, learnsets, encyclopedic prose, competitive strategy, in-context comparisons,
+Run it yourself: `python -m eval.run_eval`. Over 84 gold questions (74 single-turn answerable,
+covering usage stats, corpus-wide aggregations, stat superlatives, species data, moves,
+abilities, items, learnsets, encyclopedic prose, competitive strategy, in-context comparisons,
 usage-versus-movepool intent,
 and computed answers:
 type matchups with conditional immunities, speed checks, typed stat queries, battle-state-aware
-engine damage calculations, and tiered OHKO and survival escalation searches, plus 3
-deliberately unanswerable), the current build scores:
+engine damage calculations, and tiered OHKO and survival escalation searches; 6 conversational
+follow-ups whose referent lives in a prior turn, including one that must route into a tool
+after condensation; and 4 deliberately unanswerable, one of them a follow-up), the current
+build scores:
 
 | Metric | Score |
 |--------|-------|
 | Retrieval hit-rate@k | 100% (74/74) |
-| Answer faithfulness | 100% (66/66) |
-| Refusal precision (no-answer) | 100% (3/3) |
+| Follow-up hit-rate (condense → retrieve) | 100% (6/6) |
+| Answer faithfulness | 100% (70/70) |
+| Refusal precision (no-answer) | 100% (4/4: 3 gate, 1 generator) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
 faithfulness checks that the generated answer contains expected key terms; refusal precision
-checks that the gate fires on unanswerable questions. Retrieval and refusal are deterministic;
-generation is temperature-sampled, so faithfulness moves between 95% and 100% across runs.
+checks that the gate fires on unanswerable questions; follow-up hit-rate runs the
+conversational path (condense the follow-up against its transcript, then route) and is scored
+as its own row so the single-turn numbers stay comparable. Retrieval and refusal on
+single-turn questions are deterministic; generation and condensation are temperature-sampled,
+so faithfulness moves between 95% and 100% across runs.
 Gold questions live in [eval/questions.yaml](eval/questions.yaml).
 
 ## Corpora
@@ -259,4 +286,4 @@ python -m venv .venv && .venv/bin/pip install -e ./api
 - [x] Terrain, doubles spread reduction, and per-Pokemon modifier binding in calc questions
 - [ ] Monotype moveset tables and replay ingestion for the crystal-battle corpus
 - [ ] Validate the k8s manifests end to end
-- [ ] Query rewriting, conversation memory
+- [x] Conversational memory: stateless history-in-request, follow-up condensation, its own eval metric

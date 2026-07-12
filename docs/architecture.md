@@ -4,13 +4,18 @@
 
 1. **Ingest** (`api/ingest.py`) — a corpus adapter yields documents → text is chunked
    (window + overlap) → each chunk is embedded via Ollama → rows land in Postgres/pgvector.
-2. **Retrieve** (`api/retrieve.py`) — the question is embedded; pgvector returns the nearest
+2. **Condense** (`api/llm.py`) — when the request carries chat history, the follow-up is
+   rewritten into a standalone question ("what about its speed?" → "what is Kingambit's
+   speed?"). This is the whole conversational-memory mechanism: the server keeps no session
+   state, and everything downstream still sees a single self-contained question.
+3. **Retrieve** (`api/retrieve.py`) — the question is embedded; pgvector returns the nearest
    chunks by cosine similarity. (V2: fuse with keyword/BM25, then cross-encoder rerank.)
-3. **Gate** — if the top similarity is below `MIN_SIMILARITY`, refuse instead of hallucinate.
-4. **Generate** (`api/llm.py`) — Gemma is given the numbered passages and a strict
+4. **Gate** — if the top similarity is below `MIN_SIMILARITY`, refuse instead of hallucinate.
+5. **Generate** (`api/llm.py`) — Gemma is given the numbered passages and a strict
    grounding prompt; it answers with `[n]` citations, streamed token-by-token over SSE.
-5. **Evaluate** (`eval/run_eval.py`) — gold questions measure retrieval hit-rate, answer
-   faithfulness, and refusal precision.
+   History never enters this prompt: answers stay grounded in the fresh passages only.
+6. **Evaluate** (`eval/run_eval.py`) — gold questions measure retrieval hit-rate, answer
+   faithfulness, refusal precision, and follow-up (condense → retrieve) hit-rate.
 
 ## Why these choices
 
