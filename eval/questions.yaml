@@ -158,3 +158,20 @@
 - question: "Can Snorlax learn Curse?"
   expect_source: "learnset#Snorlax"
   expect_keywords: ["curse"]
+
+# ---- Items (pokeapi corpus; gen9 items are hand-transcribed supplements) ----
+- question: "What does Leftovers do?"
+  expect_source: "item#Leftovers"
+  expect_keywords: ["hp"]
+
+- question: "What does a Choice Scarf do?"
+  expect_source: "item#Choice Scarf"
+  expect_keywords: ["speed"]
+
+- question: "What does Booster Energy do?"
+  expect_source: "item#Booster Energy"
+  expect_keywords: ["protosynthesis"]
+
+- question: "What do Heavy-Duty Boots protect against?"
+  expect_source: "item#Heavy-Duty Boots"
+  expect_keywords: ["trap"]

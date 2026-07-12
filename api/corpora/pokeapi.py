@@ -3,7 +3,8 @@
 Point POKEAPI_PATH at a checkout of github.com/PokeAPI/pokeapi; only data/v2/csv
 is read, so a sparse clone is enough (see .env.example). Emits small citable
 documents: one per Pokemon (types, stats, abilities, Pokedex entries), one per
-move, one per ability, and one learnset per Pokemon (latest version group).
+move, one per ability, one per item, and one learnset per Pokemon (latest
+version group).
 """
 import csv
 import re
@@ -180,6 +181,66 @@ def load():
             "title": f"{name} (ability)",
             "content": "\n".join(lines),
             "metadata": {"kind": "ability"},
+        }
+
+    # ---- Item documents ----
+    item_names = {r["item_id"]: r["name"] for r in _rows(csvdir, "item_names")
+                  if r["local_language_id"] == EN}
+    item_prose = {r["item_id"]: (r["short_effect"], r["effect"])
+                  for r in _rows(csvdir, "item_prose") if r["local_language_id"] == EN}
+    item_flavor = {}
+    for r in _rows(csvdir, "item_flavor_text"):  # keep the latest version group's text
+        if r["language_id"] == EN and r["flavor_text"].strip():
+            item_flavor[r["item_id"]] = _flavor(r["flavor_text"])
+    item_cats = {r["id"]: r["identifier"] for r in _rows(csvdir, "item_categories")}
+    # bulk noise: hundreds of TMs, Dynamax crystals, sandwich ingredients, etc.
+    SKIP_CATS = {"all-machines", "tm-materials", "dynamax-crystals", "unused",
+                 "plot-advancement", "picnic", "sandwich-ingredients", "species-candies",
+                 "curry-ingredients", "baking-only", "event-items", "data-cards",
+                 "all-mail", "mulch", "dex-completion", "loot", "collectibles"}
+    for r in _rows(csvdir, "items"):
+        name = item_names.get(r["id"])
+        short, long = item_prose.get(r["id"], ("", ""))
+        flavor = item_flavor.get(r["id"], "")
+        # newer items (Heavy-Duty Boots, Booster Energy, ...) have no effect prose
+        # in the dataset; their flavor text describes the effect, so fall back to it
+        if not name or not (short or flavor) or item_cats.get(r["category_id"], "") in SKIP_CATS:
+            continue
+        lines = [f"{name} (item). {_clean_prose(short) if short else flavor}"]
+        long = _clean_prose(long)
+        if long and long.lower() != _clean_prose(short).lower():
+            lines.append(f"Details: {long[:600]}")
+        if short and flavor:
+            lines.append(f"Description: {flavor}")
+        yield {
+            "source": f"item#{name}",
+            "title": f"{name} (item)",
+            "content": "\n".join(lines),
+            "metadata": {"kind": "item", "category": item_cats.get(r["category_id"], "")},
+        }
+
+    # PokeAPI's item text coverage ends before gen 9: Scarlet/Violet items exist in
+    # item_names.csv but have no English prose or flavor text at all. These are the
+    # most competitively relevant items, so their effects are transcribed by hand.
+    GEN9_ITEM_SUPPLEMENT = {
+        "Booster Energy": "Held: when the holder is a Paradox Pokemon with Protosynthesis or Quark Drive, this item is consumed to activate that ability, boosting the holder's highest stat.",
+        "Covert Cloak": "Held: protects the holder from the additional effects of damaging moves, such as flinching or stat drops.",
+        "Loaded Dice": "Held: the holder's multi-strike moves (like Bullet Seed or Icicle Spear) hit at least four times.",
+        "Clear Amulet": "Held: prevents the holder's stats from being lowered by opposing moves or abilities like Intimidate.",
+        "Mirror Herb": "Held: copies an opponent's stat increases once, boosting the holder the same way, then the item is consumed.",
+        "Ability Shield": "Held: protects the holder's ability from being changed, suppressed, or replaced.",
+        "Punching Glove": "Held: boosts the power of the holder's punching moves by 10% and removes their contact with the target.",
+        "Fairy Feather": "Held: boosts the power of the holder's Fairy-type moves by 10%.",
+        "Wellspring Mask": "Held: boosts the power of Ogerpon Wellspring Form's moves by 20%.",
+        "Hearthflame Mask": "Held: boosts the power of Ogerpon Hearthflame Form's moves by 20%.",
+        "Cornerstone Mask": "Held: boosts the power of Ogerpon Cornerstone Form's moves by 20%.",
+    }
+    for name, effect in GEN9_ITEM_SUPPLEMENT.items():
+        yield {
+            "source": f"item#{name}",
+            "title": f"{name} (item)",
+            "content": f"{name} (item). {effect}",
+            "metadata": {"kind": "item", "category": "held-items", "text_source": "hand-transcribed"},
         }
 
     # ---- Learnset documents (latest version group per Pokemon) ----

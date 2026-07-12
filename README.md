@@ -92,14 +92,14 @@ Hybrid retrieval and reranking are next, justified by measurements instead of bu
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 37 gold questions spanning both corpora
-(34 answerable, covering usage stats, corpus-wide aggregations, species data, moves,
-abilities, and learnsets, plus 3 deliberately unanswerable), the current build scores:
+Run it yourself: `python -m eval.run_eval`. Over 41 gold questions spanning both corpora
+(38 answerable, covering usage stats, corpus-wide aggregations, species data, moves,
+abilities, items, and learnsets, plus 3 deliberately unanswerable), the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (34/34) |
-| Answer faithfulness | 100% (31/31) |
+| Retrieval hit-rate@k | 100% (38/38) |
+| Answer faithfulness | 100% (35/35) |
 | Refusal precision (no-answer) | 100% (3/3) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
@@ -123,8 +123,11 @@ Shipped adapters:
   actual ladder data.
 - **`pokeapi`**: general Pokemon knowledge from the [PokeAPI](https://github.com/PokeAPI/pokeapi)
   CSV dataset: one citable document per species (types, base stats, abilities, Pokedex
-  entries), per move, per ability, and per learnset. ~3,900 documents; a sparse checkout of
-  just `data/v2/csv` is enough (see `.env.example`).
+  entries), per move, per ability, per item, and per learnset. ~4,500 documents; a sparse
+  checkout of just `data/v2/csv` is enough (see `.env.example`). Two dataset gaps are handled
+  in the adapter: items missing effect prose fall back to their flavor text, and gen 9 items
+  (Booster Energy, Covert Cloak, ...) have no text in the dataset at all, so the top few are
+  hand-transcribed and marked as such in their metadata.
 
 ## Run it
 
