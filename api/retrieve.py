@@ -24,16 +24,21 @@ _TSV = ("(setweight(to_tsvector('english', coalesce(title,'')), 'A') || "
 # leg with common-word matches. So we select the question's rarest lexemes
 # ourselves, from a document-frequency table computed at first use.
 _df_cache: dict[str, int] | None = None
+_doc_count: int = 0
 KW_TERMS = 4       # search at most the N rarest question terms
-KW_MAX_DF = 0.05   # ignore terms in >5% of docs: "move" matches 900 titles
+KW_MAX_DF = 0.05   # ignore terms in >5% of DOCUMENTS: "move" matches 900 titles.
+                   # (Of documents, not of the max lexeme frequency: popular entity
+                   # names appear in every teammate list and must stay searchable.)
 
 
 def _lexeme_df(conn) -> dict[str, int]:
-    global _df_cache
+    global _df_cache, _doc_count
     if _df_cache is None:
         with conn.cursor() as cur:
             cur.execute(f"SELECT word, ndoc FROM ts_stat($$SELECT {_TSV} FROM chunks$$)")
             _df_cache = {w: n for w, n in cur.fetchall()}
+            cur.execute("SELECT count(*) FROM chunks")
+            _doc_count = cur.fetchone()[0]
     return _df_cache
 
 
@@ -43,7 +48,7 @@ def _rare_terms(conn, question: str) -> list[str]:
         cur.execute("SELECT unnest(tsvector_to_array(to_tsvector('english', %s)))", (question,))
         lexemes = [row[0] for row in cur.fetchall()]
     df = _lexeme_df(conn)
-    ceiling = max(2, int(KW_MAX_DF * max(df.values(), default=0)))
+    ceiling = max(2, int(KW_MAX_DF * _doc_count))
     rare = sorted({l for l in lexemes if l in df and df[l] <= ceiling}, key=lambda l: df[l])
     return rare[:KW_TERMS]
 
@@ -120,6 +125,21 @@ async def retrieve_hybrid(question: str, k: int | None = None, corpus: str | Non
     # rerank the fused pool (not just top-k): the cross-encoder can rescue a
     # passage that both cheap legs underrank
     reranked = await asyncio.to_thread(rerank, question, candidates)
+    # entity anchoring: the cross-encoder overvalues definitional prose ("Priority
+    # § Mechanics" outranks Kingambit's own stats for "what priority move does
+    # kingambit carry"), so passages whose title carries one of the question's
+    # rare terms get a bonus it cannot see
+    with connect() as conn:
+        rare = _rare_terms(conn, question)
+    if rare:
+        # ordering prior only: the boost must NOT touch rerank_score, which the
+        # refusal gate reads ("Point Card" must not open the gate for a question
+        # about boiling points)
+        def anchored(p):
+            title = (p.get("title") or p.get("source") or "").lower()
+            bonus = settings.title_anchor_boost if any(t in title for t in rare) else 0.0
+            return p.get("rerank_score", 0.0) + bonus
+        reranked.sort(key=anchored, reverse=True)
     return reranked[:k]
 
 
