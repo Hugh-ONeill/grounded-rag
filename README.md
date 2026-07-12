@@ -23,10 +23,11 @@ Every answer is grounded in numbered passages, so you can see exactly where it c
 
 ```
 Documents → Chunk (overlap + metadata) → Embed (Ollama) → Postgres + pgvector
-                                                               │
-Query → Embed → Hybrid retrieve (vector + keyword, RRF) → cross-encoder rerank → gate
-                                                               │
-                       Gemma (Ollama) + retrieved context → answer + [citations]
+
+Query → Router ── computed (matchup / speed / stat query)? → tools → pseudo-passages ──┐
+           └── otherwise → Embed → Hybrid retrieve (RRF) → cross-encoder rerank → gate ┤
+                                                                                       │
+                              Gemma (Ollama) + passages → answer + [citations]
                                                                │
                                   eval/ harness → hit-rate@k, faithfulness, refusal
 ```
@@ -43,6 +44,7 @@ See [docs/architecture.md](docs/architecture.md) for the detailed flow.
 | LLM | **Gemma (Ollama)** | Local generation, no API cost |
 | Backend | **FastAPI** | Async, typed, streams responses (SSE) |
 | Frontend | **React + TypeScript (Vite)** | Streaming chat UI with cited sources |
+| Tools | **Type chart + stats, computed** | Deterministic answers rendered as citable pseudo-passages |
 | Infra | **Docker Compose** (→ k8s manifests) | One command to run the whole system |
 
 ## Key engineering decisions
@@ -98,6 +100,20 @@ dilutes; reciprocal rank fusion merges the two, and the cross-encoder reorders t
 Comparisons between things in context are also explicitly permitted by the prompt, which
 previously blocked them along with corpus-wide superlatives.
 
+**Computed questions route to deterministic tools, and the LLM stays the narrator.**
+"Is Earthquake effective against Skarmory?" is not a retrieval question: the answer is type
+math. A rule-based router recognizes matchup, speed-comparison, and stat-superlative questions
+(only when it positively identifies real Pokemon, move, or type names; anything uncertain
+falls through to retrieval) and calls tools that compute the answer from the PokeAPI data:
+the full type chart, base stats, per-Pokemon abilities. Tool output is rendered as a citable
+pseudo-passage, so the citation prompt, the refusal gate, and the eval treat it exactly like
+retrieved text. The tools also carry the conditional mechanics a raw type chart misses: a
+Ground-vs-Flying immunity is reported together with its Gravity/Smack Down/Iron Ball and
+Roost variants (with recomputed multipliers), and ability-based immunities like Levitate are
+flagged from data. Deliberately not LLM function-calling: the router is a dozen lines of
+rules that cannot hallucinate a tool call, and tool questions get gold answers with
+deterministic ground truth.
+
 **Postgres full-text search has no IDF, so term selection supplies it.** First contact with
 the keyword leg was a flood: for "What is Garganacl's most used move?", OR-querying every
 question word made 900 move documents title-match the word "move", and ts_rank scores a title
@@ -108,15 +124,16 @@ the moment the corpus grew past what the vector leg could carry alone.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 48 gold questions spanning both corpora
-(45 answerable, covering usage stats, corpus-wide aggregations, stat superlatives, species
-data, moves, abilities, items, learnsets, in-context comparisons, and usage-versus-movepool
-intent, plus 3 deliberately unanswerable), the current build scores:
+Run it yourself: `python -m eval.run_eval`. Over 55 gold questions (52 answerable, covering
+usage stats, corpus-wide aggregations, stat superlatives, species data, moves, abilities,
+items, learnsets, in-context comparisons, usage-versus-movepool intent, and computed answers:
+type matchups with conditional immunities, speed checks, and typed stat queries, plus 3
+deliberately unanswerable), the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (45/45) |
-| Answer faithfulness | 100% (41/41) |
+| Retrieval hit-rate@k | 100% (52/52) |
+| Answer faithfulness | 100% (48/48) |
 | Refusal precision (no-answer) | 100% (3/3) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
@@ -173,6 +190,8 @@ python -m venv .venv && .venv/bin/pip install -e ./api
 - [x] Eval harness with published numbers
 - [x] Hybrid retrieval (vector + weighted full-text, reciprocal rank fusion)
 - [x] Cross-encoder reranking, now also scoring the refusal gate
+- [x] Question router + deterministic tools (type matchups with conditional immunities, speed checks, stat queries)
+- [ ] poke-engine damage calculator tool (battle-state-aware: boosts, items, weather)
 - [ ] Monotype moveset tables and replay ingestion for the crystal-battle corpus
 - [ ] Validate the k8s manifests end to end
 - [ ] Query rewriting, conversation memory
