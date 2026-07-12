@@ -387,8 +387,9 @@ def damage_calc(attacker: str, move: str, defender: str,
     if spread:
         if move.lower() in d["spread"]:
             lo, hi = int(lo * 0.75), int(hi * 0.75)
-            spread_note = (f" Spread damage applied: {move_name} hits multiple targets in "
-                           f"doubles, so its damage is multiplied by 0.75.")
+            spread_note = (f" The damage figures above already include the 0.75x spread "
+                           f"reduction, because {move_name} hits multiple targets in doubles; "
+                           f"do not reduce them again.")
         else:
             spread_note = f" Note: {move_name} is single-target, so no spread reduction applies in doubles."
 
