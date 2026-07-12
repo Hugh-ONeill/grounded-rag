@@ -1,5 +1,6 @@
 """Postgres + pgvector storage. This boilerplate is done; the schema is the interesting bit."""
 import psycopg
+from psycopg.types.json import Json
 from pgvector.psycopg import register_vector
 from config import settings
 
@@ -40,7 +41,7 @@ def insert_chunks(rows):
     with connect() as conn, conn.cursor() as cur:
         cur.executemany(
             "INSERT INTO chunks (source, title, content, metadata, embedding) VALUES (%s,%s,%s,%s,%s)",
-            list(rows),
+            [(s, t, c, Json(m), e) for s, t, c, m, e in rows],
         )
         conn.commit()
 
