@@ -129,3 +129,32 @@
 - question: "Which Pokemon appears on almost every Gen 2 OU team?"
   expect_source: "gen2ou_chaos#usage_rankings"
   expect_keywords: ["snorlax"]
+
+# ---- General knowledge (pokeapi corpus: species, moves, abilities, learnsets) ----
+- question: "What type is Scizor?"
+  expect_source: "pokedex#Scizor"
+  expect_keywords: ["bug", "steel"]
+
+- question: "What are Snorlax's base stats?"
+  expect_source: "pokedex#Snorlax"
+  expect_keywords: ["160"]
+
+- question: "Which Pokemon is known as the Sleeping Pokemon?"
+  expect_source: "pokedex#Snorlax"
+  expect_keywords: ["snorlax"]
+
+- question: "What does the ability Regenerator do?"
+  expect_source: "ability#Regenerator"
+  expect_keywords: ["switch"]
+
+- question: "What is the base power of Earthquake?"
+  expect_source: "move#Earthquake"
+  expect_keywords: ["100"]
+
+- question: "What does the move Salt Cure do?"
+  expect_source: "move#Salt Cure"
+  expect_keywords: ["steel", "water"]
+
+- question: "Can Snorlax learn Curse?"
+  expect_source: "learnset#Snorlax"
+  expect_keywords: ["curse"]

@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     corpus: str = "markdown_dir"
     corpus_path: str = "./docs"
     crystal_battle_path: str = ""
+    pokeapi_path: str = ""
 
     ollama_host: str = "http://localhost:11434"
     embed_model: str = "nomic-embed-text"
