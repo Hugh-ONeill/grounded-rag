@@ -7,19 +7,33 @@ Measures, over a set of gold questions:
   - follow-up hit-rate   : items with `history` are condensed to a standalone question
                            first (the conversational-memory path), then scored on
                            retrieval separately so single-turn numbers stay comparable
+  - ungrounded entities  : known Pokemon/move names the answer mentions that appear in
+                           NO retrieved passage — knowledge leakage the keyword proxy
+                           can't see (the model decorating answers from world knowledge)
 
 Run:  python -m eval.run_eval
 Then paste the printed table into the README's Evaluation section.
+Exits nonzero on any miss, so it can gate a pre-push hook. Retrieval and gate refusals
+are deterministic; generation-side misses (faithfulness, generator refusals, leaks) can
+wobble across runs — reread the miss lines before treating one as a regression.
 """
 import asyncio
+import re
 import sys
 from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "api"))
 from retrieve import passes_threshold
-from router import route   # noqa: E402
+from router import route, find_entity_names   # noqa: E402
 from llm import answer_stream, condense_question    # noqa: E402
+
+
+def _squash(s: str) -> str:
+    """Lowercase alphanumerics only: 'Shadow Ball' matches the raw 'shadowball' in
+    chaos docs. Loses word boundaries, so short common-word move names ('rest')
+    almost always match something — acceptable for a leak check, not a hit check."""
+    return re.sub(r"[^a-z0-9]", "", s.lower())
 
 
 async def _full_answer(q, passages):
@@ -33,7 +47,7 @@ async def main():
     questions = yaml.safe_load(qfile.read_text())
 
     hits = faith = faith_total = refuse_ok = refuse_total = refuse_gate = 0
-    answerable = fu_hits = fu_total = 0
+    answerable = fu_hits = fu_total = leaks = 0
 
     for item in questions:
         q = item["question"]
@@ -69,9 +83,22 @@ async def main():
         kws = item.get("expect_keywords") or []
         if kws:
             faith_total += 1
-            ans = (await _full_answer(q, passages)).lower()
-            if all(k.lower() in ans for k in kws):
+            raw_ans = await _full_answer(q, passages)
+            if all(k.lower() in raw_ans.lower() for k in kws):
                 faith += 1
+            # knowledge-leakage check: entities the answer names must exist in some
+            # retrieved passage. Lowercase occurrences are skipped: a move named
+            # "rest" or "protect" matching ordinary prose is not an entity mention.
+            ctx = _squash(" ".join(p["content"] for p in passages))
+            ents = find_entity_names(raw_ans)
+            for name in ents["pokemon"] + ents["moves"]:
+                if _squash(name) in ctx:
+                    continue
+                m = re.search(rf"\b{re.escape(name)}(?:['’]s|s)?\b", raw_ans, re.I)
+                if m and not m.group(0)[0].isupper():
+                    continue
+                leaks += 1
+                print(f"  ungrounded entity: {name!r} in answer to {item['question']!r}")
 
     def pct(a, b):
         return f"{100*a/b:.0f}%" if b else "n/a"
@@ -83,6 +110,11 @@ async def main():
     print(f"| Answer faithfulness | {pct(faith, faith_total)} ({faith}/{faith_total}) |")
     print(f"| Refusal precision (no-answer) | {pct(refuse_ok, refuse_total)} ({refuse_ok}/{refuse_total}: "
           f"{refuse_gate} gate, {refuse_ok - refuse_gate} generator) |")
+    print(f"| Ungrounded entity mentions | {leaks} (over {faith_total} generated answers) |")
+
+    if (hits < answerable or fu_hits < fu_total or refuse_ok < refuse_total
+            or faith < faith_total or leaks):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
