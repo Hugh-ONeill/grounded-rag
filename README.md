@@ -104,7 +104,10 @@ self-contained question, unchanged in meaning and tuning. Two deliberate constra
 server holds no sessions (the transcript rides along in the request, so any frontend that
 owns its own conversation state, like an embedded companion or agent, can use `/ask` as a
 pure knowledge tool), and history never enters the answer prompt, so a prior answer can never
-become uncited evidence. The UI surfaces the rewrite as "searched as: ...", which makes
+become uncited evidence. Clients that narrate for themselves get `/retrieve`: the same routed
+passages, tool outputs, gate verdict, and follow-up condensation as `/ask`, returned as plain
+JSON with no generation step, so computed answers (calcs, matchups, speed checks) come back
+in milliseconds and the external voice does its own narrating instead of paraphrasing Gemma's. The UI surfaces the rewrite as "searched as: ...", which makes
 condensation failures visible instead of silent, and the eval scores follow-ups as their own
 metric so single-turn numbers stay comparable. The follow-up gold questions immediately
 caught something real: "what about its stock price?" condenses to "what about Kingambit's
@@ -200,15 +203,23 @@ build scores:
 | Follow-up hit-rate (condense → retrieve) | 100% (6/6) |
 | Answer faithfulness | 100% (70/70) |
 | Refusal precision (no-answer) | 100% (4/4: 3 gate, 1 generator) |
+| Ungrounded entity mentions | 0 (over 70 generated answers) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
 faithfulness checks that the generated answer contains expected key terms; refusal precision
 checks that the gate fires on unanswerable questions; follow-up hit-rate runs the
 conversational path (condense the follow-up against its transcript, then route) and is scored
-as its own row so the single-turn numbers stay comparable. Retrieval and refusal on
+as its own row so the single-turn numbers stay comparable. Ungrounded entity mentions counts
+known Pokemon and move names a generated answer uses that appear in no retrieved passage:
+knowledge leakage that keyword checks cannot see, because an answer can contain every
+expected term and still be decorated with world knowledge. Retrieval and refusal on
 single-turn questions are deterministic; generation and condensation are temperature-sampled,
 so faithfulness moves between 95% and 100% across runs.
-Gold questions live in [eval/questions.yaml](eval/questions.yaml).
+Gold questions live in [eval/questions.yaml](eval/questions.yaml). The harness exits nonzero
+on any miss, and a local pre-push hook runs it before every publish. A companion command,
+`python -m eval.band_report`, prints each gate signal's answerable and no-answer bands with
+margins against the configured thresholds; the bands moved with every corpus growth, and this
+makes the drift visible before the eval breaks.
 
 ## Corpora
 
@@ -287,3 +298,7 @@ python -m venv .venv && .venv/bin/pip install -e ./api
 - [ ] Monotype moveset tables and replay ingestion for the crystal-battle corpus
 - [ ] Validate the k8s manifests end to end
 - [x] Conversational memory: stateless history-in-request, follow-up condensation, its own eval metric
+- [x] `/retrieve`: routed passages + tool outputs without generation, for external narrators
+- [x] Ungrounded-entity eval metric (knowledge leakage the keyword proxy can't see)
+- [x] Band-drift report: gate-signal bands and threshold margins as one command
+- [x] Pre-push eval hook (harness exits nonzero on any miss)

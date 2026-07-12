@@ -15,7 +15,8 @@
    grounding prompt; it answers with `[n]` citations, streamed token-by-token over SSE.
    History never enters this prompt: answers stay grounded in the fresh passages only.
 6. **Evaluate** (`eval/run_eval.py`) — gold questions measure retrieval hit-rate, answer
-   faithfulness, refusal precision, and follow-up (condense → retrieve) hit-rate.
+   faithfulness, refusal precision, follow-up (condense → retrieve) hit-rate, and
+   ungrounded entity mentions; `eval/band_report.py` reports gate-signal bands and margins.
 
 ## Why these choices
 
@@ -36,6 +37,6 @@
 | `api/db.py` | pgvector schema + writes |
 | `api/retrieve.py` | Vector search (+ V2 hybrid/rerank) |
 | `api/llm.py` | Grounded, cited, streamed generation |
-| `api/main.py` | FastAPI `/ask` (SSE) |
+| `api/main.py` | FastAPI `/ask` (SSE) + `/retrieve` (JSON, no generation) |
 | `web/` | React + TS streaming chat UI |
 | `eval/` | Gold questions + metrics |
