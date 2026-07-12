@@ -18,6 +18,9 @@ BLOCKED_SECTIONS = {
     "by a prior evolution", "game locations", "in side games", "side game data",
     "in other games", "in spin-off games", "names", "related articles", "appearances",
     "in the pokémon adventures manga", "game data", "in animation", "errors",
+    "in the spin-off games", "in spin-off games", "merchandise", "in pokémon go",
+    "in the mystery dungeon series", "in other media", "cries", "forms",
+    "other appearances", "major appearances", "minor appearances",
 }
 
 
