@@ -112,7 +112,9 @@ deeper: they run through the [poke-engine](https://github.com/pmariglia/poke-eng
 engine (the same Rust engine behind the crystal-battle agent), with real base stats and
 stated assumptions (level 100, neutral spreads, no items or abilities), returning true damage
 rolls and n-HKO verdicts. Battle state is parsed from the question (boosts, setup moves,
-items, natures, EV spreads, burn, weather, Tera), and "what would it take to OHKO?" questions
+items, natures, EV spreads, burn, weather, terrain, Tera, and doubles spread reduction),
+with modifiers bound to the Pokemon they describe ("a bold max HP Milotic" invests the
+defender; "Choice Band Scizor" equips the attacker), and "what would it take to OHKO?" questions
 run a tiered escalation search: levers are applied cumulatively, largest structural choices
 first (nature, then EVs with IVs always assumed perfect, then item, then weather, Tera, and
 boosts), recomputing engine rolls at each rung until the KO is guaranteed, with immunities
@@ -143,7 +145,7 @@ the moment the corpus grew past what the vector leg could carry alone.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 67 gold questions (64 answerable, covering
+Run it yourself: `python -m eval.run_eval`. Over 70 gold questions (67 answerable, covering
 usage stats, corpus-wide aggregations, stat superlatives, species data, moves, abilities,
 items, learnsets, in-context comparisons, usage-versus-movepool intent, and computed answers:
 type matchups with conditional immunities, speed checks, typed stat queries, battle-state-aware
@@ -152,8 +154,8 @@ deliberately unanswerable), the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (64/64) |
-| Answer faithfulness | 100% (60/60) |
+| Retrieval hit-rate@k | 100% (67/67) |
+| Answer faithfulness | 100% (63/63) |
 | Refusal precision (no-answer) | 100% (3/3) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
@@ -221,6 +223,7 @@ python -m venv .venv && .venv/bin/pip install -e ./api
 - [x] Tiered OHKO escalation search ("what would it take to OHKO?")
 - [x] Defensive escalation search ("what would it take to survive?")
 - [x] Cross-referenced ability immunities in damage answers, with observed usage rates
+- [x] Terrain, doubles spread reduction, and per-Pokemon modifier binding in calc questions
 - [ ] Monotype moveset tables and replay ingestion for the crystal-battle corpus
 - [ ] Validate the k8s manifests end to end
 - [ ] Query rewriting, conversation memory

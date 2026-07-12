@@ -61,10 +61,13 @@ def _data():
                   if r["local_language_id"] == EN}
     dmg_class2 = {r["id"]: r["identifier"] for r in rows("move_damage_classes")}
     moves = {}  # lowercase move name -> (Name, type, class)
+    spread_moves = set()  # hit multiple targets in doubles (0.75x): all-other-pokemon / all-opponents
     for r in rows("moves"):
         name, typ = move_names.get(r["id"]), type_names.get(r["type_id"])
         if name and typ:
             moves[name.lower()] = (name, typ, dmg_class2.get(r["damage_class_id"], "?"))
+            if r["target_id"] in ("9", "11"):
+                spread_moves.add(name.lower())
 
     def pretty(ident):
         return "-".join(p.capitalize() for p in ident.split("-"))
@@ -80,7 +83,7 @@ def _data():
             "abilities": p_abils.get(r["id"], []),
             "weight_kg": int(r["weight"] or 0) / 10,
         }
-    return {"chart": chart, "mons": mons, "moves": moves,
+    return {"chart": chart, "mons": mons, "moves": moves, "spread": spread_moves,
             "types": sorted(set(type_names.values()))}
 
 
@@ -312,11 +315,12 @@ def _level100_neutral(mon: dict, evs: dict | None = None, nature: tuple | None =
     return hp, o
 
 
-def _calc_rolls(a: dict, move_name: str, b: dict, am: dict, dm: dict, weather: str):
+def _calc_rolls(a: dict, move_name: str, b: dict, am: dict, dm: dict, weather: str,
+                terrain: str = "none"):
     """Engine damage core: returns (lo, hi, defender_max_hp), or (None, None, None)."""
     try:
         from poke_engine import (State, Side, SideConditions, Pokemon, Move, Weather,
-                                 calculate_damage)
+                                 Terrain, calculate_damage)
     except ImportError:
         return None, None, None
 
@@ -353,7 +357,9 @@ def _calc_rolls(a: dict, move_name: str, b: dict, am: dict, dm: dict, weather: s
     state = State(side_one=side(a, _engine_id(move_name), am),
                   side_two=side(b, "tackle", dm),
                   weather=Weather(weather),
-                  weather_turns_remaining=-1 if weather != "none" else 0)
+                  weather_turns_remaining=-1 if weather != "none" else 0,
+                  terrain=Terrain(terrain),
+                  terrain_turns_remaining=-1 if terrain != "none" else 0)
     rolls = calculate_damage(state, _engine_id(move_name), "tackle", True)[0]
     lo, hi = (min(rolls), max(rolls)) if rolls else (0, 0)
     def_hp, _ = _level100_neutral(b, dm.get("evs"), dm.get("nature"))
@@ -362,7 +368,7 @@ def _calc_rolls(a: dict, move_name: str, b: dict, am: dict, dm: dict, weather: s
 
 def damage_calc(attacker: str, move: str, defender: str,
                 attacker_mods: dict | None = None, defender_mods: dict | None = None,
-                weather: str = "none") -> list[dict]:
+                weather: str = "none", terrain: str = "none", spread: bool = False) -> list[dict]:
     """Damage rolls for attacker using move into defender, via poke-engine.
     Baseline: level 100, 31 IVs, 0 EVs, neutral natures, no items or abilities.
     mods: {"item": str, "boosts": {stat: n}, "nature": (up, down),
@@ -374,9 +380,17 @@ def damage_calc(attacker: str, move: str, defender: str,
     if not a or not b or not move_entry:
         return []
     move_name = move_entry[0]
-    lo, hi, def_hp = _calc_rolls(a, move_name, b, am, dm, weather)
+    lo, hi, def_hp = _calc_rolls(a, move_name, b, am, dm, weather, terrain)
     if lo is None:
         return []
+    spread_note = ""
+    if spread:
+        if move.lower() in d["spread"]:
+            lo, hi = int(lo * 0.75), int(hi * 0.75)
+            spread_note = (f" Spread damage applied: {move_name} hits multiple targets in "
+                           f"doubles, so its damage is multiplied by 0.75.")
+        else:
+            spread_note = f" Note: {move_name} is single-target, so no spread reduction applies in doubles."
 
     # rolls computed in _calc_rolls (shared with ohko_search)
     lo_pct, hi_pct = 100 * lo / def_hp, 100 * hi / def_hp
@@ -407,7 +421,8 @@ def damage_calc(attacker: str, move: str, defender: str,
             bits.append(f"Tera {mods['tera'].capitalize()}")
         return f"{name} ({', '.join(bits)})" if bits else name
 
-    applied = f" Weather: {weather}." if weather != "none" else ""
+    applied = (f" Weather: {weather}." if weather != "none" else "") + \
+              (f" Terrain: {terrain}." if terrain != "none" else "") + spread_note
     imm = _ability_immunity(b, move_entry[1])
     if imm and imm["certain"] and lo > 0:
         content = (f"Damage calculation via the poke-engine battle engine: no. "

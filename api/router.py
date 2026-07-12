@@ -46,62 +46,101 @@ _EV_STATS = {"attack": "Attack", "atk": "Attack", "spa": "Special Attack",
              "speed": "Speed", "spe": "Speed"}
 
 
-def _parse_mods(question: str):
-    """Extract battle-state modifiers; return (stripped_question, atk_mods, def_mods, weather).
-    Offensive kit binds to the attacker, defensive kit to the defender."""
+def _parse_mods(question: str, mons: list[str]):
+    """Extract battle-state modifiers with proximity binding: a modifier phrase
+    binds to the nearest Pokemon named shortly after it ("bold max hp skarmory"
+    mods Skarmory), falling back to offensive-kit-to-attacker / defensive-kit-to-
+    defender when no name follows. Returns (stripped_question, mods_by_mon,
+    fallback_attacker_mods, fallback_defender_mods, field)."""
     q = question.lower()
-    atk, dfn = {}, {}
+    mon_pos = {}
+    for mon in mons:
+        m = re.search(rf"\b{re.escape(mon)}(?:['\u2019]s|s)?\b", q)
+        if m:
+            mon_pos[mon] = m.start()
+
+    by_mon: dict[str, dict] = {m: {} for m in mons}
+    fb_atk: dict = {}
+    fb_dfn: dict = {}
+    field = {"weather": "none", "terrain": "none", "spread": False}
+
+    def bind(pos, fallback):
+        after = [(p - pos, m) for m, p in mon_pos.items() if 0 < p - pos <= 40]
+        if after:
+            return by_mon[min(after)[1]]
+        return fallback
 
     def strip(pattern):
         nonlocal q
         q = re.sub(pattern, " ", q)
 
+    def merge_boost(target, boosts):
+        target.setdefault("boosts", {}).update(boosts)
+
     for phrase, boosts in _SETUP.items():
-        if re.search(rf"(?:after|following)[a-z ]*\b{phrase}\b|\b{phrase}\b(?: boost(?:ed)?)?", q) \
-                and re.search(rf"after|following|boost|\+", q):
-            atk.setdefault("boosts", {}).update(boosts)
+        if re.search(rf"\b{phrase}\b", q) and re.search(r"after|following|boost|\+", q):
+            merge_boost(fb_atk, boosts)  # setup describes the attacker's own action
             strip(rf"(?:after (?:a |an |using )?)?\b{phrase}\b")
-    m = re.search(r"\+([1-6])\b(?:\s*(attack|atk|spa|special attack|speed))?", q)
-    if m:
-        n = int(m.group(1))
+    for m in re.finditer(r"\+([1-6])\b(?:\s*(attack|atk|spa|special attack|speed))?", q):
         stat = _EV_STATS.get(m.group(2) or "", None)
-        boosts = {stat: n} if stat else {"Attack": n, "Special Attack": n}
-        atk.setdefault("boosts", {}).update(boosts)
-        strip(r"\+[1-6]\b(?:\s*(?:attack|atk|spa|special attack|speed))?")
+        boosts = {stat: int(m.group(1))} if stat else {"Attack": int(m.group(1)),
+                                                       "Special Attack": int(m.group(1))}
+        merge_boost(bind(m.start(), fb_atk), boosts)
+    strip(r"\+[1-6]\b(?:\s*(?:attack|atk|spa|special attack|speed))?")
     for phrase, item in _OFFENSE_ITEMS.items():
-        if re.search(rf"\b{phrase}\b", q):
-            atk["item"] = item
+        m = re.search(rf"\b{phrase}\b", q)
+        if m:
+            bind(m.start(), fb_atk)["item"] = item
             strip(rf"\b{phrase}\b")
             break
     for phrase, item in _DEFENSE_ITEMS.items():
-        if re.search(rf"\b{phrase}\b", q):
-            dfn["item"] = item
+        m = re.search(rf"\b{phrase}\b", q)
+        if m:
+            bind(m.start(), fb_dfn)["item"] = item
             strip(rf"\b{phrase}\b")
             break
     for nature, updown in _NATURES.items():
-        if re.search(rf"\b{nature}\b", q):
-            side = atk if nature in _OFFENSIVE_NATURES else dfn
+        m = re.search(rf"\b{nature}\b", q)
+        if m:
+            side = bind(m.start(), fb_atk if nature in _OFFENSIVE_NATURES else fb_dfn)
             side["nature"] = updown
             side.setdefault("evs", {})[updown[0]] = 252
             strip(rf"\b{nature}\b")
-    for m2 in re.finditer(r"(?:max|252)\s+(attack|atk|spa|special attack|hp|def|defense|spd|special defense|speed|spe)", q):
-        stat = _EV_STATS[m2.group(1)]
-        side = dfn if stat in ("HP", "Defense", "Special Defense") else atk
-        side.setdefault("evs", {})[stat] = 252
+    for m in re.finditer(r"(?:max|252)\s+(attack|atk|spa|special attack|hp|def|defense|spd|special defense|speed|spe)", q):
+        stat = _EV_STATS[m.group(1)]
+        default = fb_dfn if stat in ("HP", "Defense", "Special Defense") else fb_atk
+        bind(m.start(), default).setdefault("evs", {})[stat] = 252
     strip(r"(?:max|252)\s+(?:attack|atk|spa|special attack|hp|def|defense|spd|special defense|speed|spe)")
-    if re.search(r"\bburn(?:ed|t)?\b", q):
-        atk["status"] = "brn"
+    m = re.search(r"\bburn(?:ed|t)?\b", q)
+    if m:
+        bind(m.start(), fb_atk)["status"] = "brn"
         strip(r"\bburn(?:ed|t)?\b")
-    weather = "none"
-    m3 = re.search(r"\bin (?:the )?(sun|rain|sand(?:storm)?|snow|hail)\b", q)
-    if m3:
-        weather = {"sandstorm": "sand"}.get(m3.group(1), m3.group(1))
+    m = re.search(r"\bin (?:the )?(sun|rain|sand(?:storm)?|snow|hail)\b", q)
+    if m:
+        field["weather"] = {"sandstorm": "sand"}.get(m.group(1), m.group(1))
         strip(r"\bin (?:the )?(?:sun|rain|sand(?:storm)?|snow|hail)\b")
-    m4 = re.search(r"\btera[- ]?([a-z]+)\b", q)
-    if m4 and m4.group(1).capitalize() in tools.known_types():
-        atk["tera"] = m4.group(1)
+    m = re.search(r"\bin (?:the )?(electric|grassy|psychic|misty) terrain\b", q)
+    if m:
+        field["terrain"] = m.group(1) + "terrain"
+        strip(r"\bin (?:the )?(?:electric|grassy|psychic|misty) terrain\b")
+    if re.search(r"\bin doubles\b|\bin vgc\b|\bspread\b|\bdouble battle\b", q):
+        field["spread"] = True
+        strip(r"\bin doubles\b|\bin vgc\b|\bspread\b|\bdouble battle\b")
+    m = re.search(r"\btera[- ]?([a-z]+)\b", q)
+    if m and m.group(1).capitalize() in tools.known_types():
+        bind(m.start(), fb_atk)["tera"] = m.group(1)
         strip(r"\btera[- ]?[a-z]+\b")
-    return q, atk, dfn, weather
+    return q, by_mon, fb_atk, fb_dfn, field
+
+
+def _merged(base: dict, extra: dict) -> dict:
+    out = {k: v for k, v in base.items()}
+    for k, v in extra.items():
+        if k in ("boosts", "evs"):
+            out.setdefault(k, {}).update(v)
+        else:
+            out[k] = v
+    return out
 
 
 def _find_names(question: str, names, limit: int = 3) -> list[str]:
@@ -164,14 +203,14 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
 
     # "what would X need to survive Y's Z" -> defensive escalation search
     if _SURVIVE_HOW.search(question) and len(mons) >= 2:
-        q0, atk_mods, _dm, _wx = _parse_mods(question)
+        q0, by_mon, fb_atk, _fb_dfn, field = _parse_mods(question, mons)
         moves = _find_names(q0, tools.known_moves())
         if moves:
             move_pos = q0.find(moves[0])
             attacker = min(mons, key=lambda m: abs(q0.find(m) - move_pos))
             defender = next(m for m in mons if m != attacker)
             name = tools.known_moves()[moves[0]][0]
-            p = tools.survive_search(attacker, name, defender, atk_mods)
+            p = tools.survive_search(attacker, name, defender, _merged(fb_atk, by_mon.get(attacker, {})))
             if p:
                 return p
 
@@ -196,7 +235,7 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
     # "does Garchomp's Earthquake OHKO Heatran" / "how much damage does X's Y do to Z"
     # with optional battle state: boosts, items, natures, EVs, burn, weather, tera
     if _DAMAGE.search(question) and len(mons) >= 2:
-        q, atk_mods, def_mods, weather = _parse_mods(question)
+        q, by_mon, fb_atk, fb_dfn, field = _parse_mods(question, mons)
         moves = _find_names(q, tools.known_moves())
         if moves:
             move_pos = q.find(moves[0])
@@ -208,7 +247,10 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
                 attacker = min(mons, key=lambda m: abs(q.find(m) - move_pos))
                 defender = next(m for m in mons if m != attacker)
             name = tools.known_moves()[moves[0]][0]
-            p = tools.damage_calc(attacker, name, defender, atk_mods, def_mods, weather)
+            p = tools.damage_calc(attacker, name, defender,
+                                  _merged(fb_atk, by_mon.get(attacker, {})),
+                                  _merged(fb_dfn, by_mon.get(defender, {})),
+                                  field["weather"], field["terrain"], field["spread"])
             if p:
                 return p
 

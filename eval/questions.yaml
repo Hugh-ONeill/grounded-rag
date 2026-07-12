@@ -287,3 +287,16 @@
 - question: "Can Garchomp's Earthquake OHKO Rotom-Wash?"
   expect_source: "tool#damage_calc"
   expect_keywords: ["levitate", "gravity"]
+
+# ---- Stretch calc state: terrain, spread damage, defender-bound modifiers ----
+- question: "How much damage does Garchomp's Earthquake do to Heatran in grassy terrain?"
+  expect_source: "tool#damage_calc"
+  expect_keywords: ["306", "459"]
+
+- question: "How much damage does Garchomp's Earthquake do to Heatran in doubles?"
+  expect_source: "tool#damage_calc"
+  expect_keywords: ["459", "688"]
+
+- question: "Does Garchomp's Earthquake OHKO a bold max hp Milotic?"
+  expect_source: "tool#damage_calc"
+  expect_keywords: ["2-3hko"]
