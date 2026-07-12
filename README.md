@@ -107,7 +107,11 @@ math. A rule-based router recognizes matchup, speed-comparison, and stat-superla
 falls through to retrieval) and calls tools that compute the answer from the PokeAPI data:
 the full type chart, base stats, per-Pokemon abilities. Tool output is rendered as a citable
 pseudo-passage, so the citation prompt, the refusal gate, and the eval treat it exactly like
-retrieved text. The tools also carry the conditional mechanics a raw type chart misses: a
+retrieved text. Damage questions ("Does Garchomp's Earthquake OHKO Heatran?") go one level
+deeper: they run through the [poke-engine](https://github.com/pmariglia/poke-engine) battle
+engine (the same Rust engine behind the crystal-battle agent), with real base stats and
+stated assumptions (level 100, neutral spreads, no items or abilities), returning true damage
+rolls and n-HKO verdicts. The tools also carry the conditional mechanics a raw type chart misses: a
 Ground-vs-Flying immunity is reported together with its Gravity/Smack Down/Iron Ball and
 Roost variants (with recomputed multipliers), and ability-based immunities like Levitate are
 flagged from data. Deliberately not LLM function-calling: the router is a dozen lines of
@@ -124,16 +128,16 @@ the moment the corpus grew past what the vector leg could carry alone.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 55 gold questions (52 answerable, covering
+Run it yourself: `python -m eval.run_eval`. Over 57 gold questions (54 answerable, covering
 usage stats, corpus-wide aggregations, stat superlatives, species data, moves, abilities,
 items, learnsets, in-context comparisons, usage-versus-movepool intent, and computed answers:
-type matchups with conditional immunities, speed checks, and typed stat queries, plus 3
-deliberately unanswerable), the current build scores:
+type matchups with conditional immunities, speed checks, typed stat queries, and engine
+damage calculations, plus 3 deliberately unanswerable), the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (52/52) |
-| Answer faithfulness | 100% (48/48) |
+| Retrieval hit-rate@k | 100% (54/54) |
+| Answer faithfulness | 100% (50/50) |
 | Refusal precision (no-answer) | 100% (3/3) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
@@ -174,6 +178,11 @@ docker compose exec api python -m ingest crystal_battle pokeapi   # build the in
 
 No Docker? Any Postgres with the pgvector extension works:
 
+The damage-calc tool needs [poke-engine](https://github.com/pmariglia/poke-engine) built
+from source with gen 9 features (`maturin build --release --no-default-features --features
+terastallization` in `poke-engine-py`, then pip install the wheel); without it, damage
+questions fall through to retrieval.
+
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ./api
 # point DATABASE_URL in .env at your Postgres, then:
@@ -191,7 +200,8 @@ python -m venv .venv && .venv/bin/pip install -e ./api
 - [x] Hybrid retrieval (vector + weighted full-text, reciprocal rank fusion)
 - [x] Cross-encoder reranking, now also scoring the refusal gate
 - [x] Question router + deterministic tools (type matchups with conditional immunities, speed checks, stat queries)
-- [ ] poke-engine damage calculator tool (battle-state-aware: boosts, items, weather)
+- [x] poke-engine damage calculator tool (neutral spreads, true engine rolls, n-HKO verdicts)
+- [ ] Battle-state-aware calc inputs: boosts, items, abilities, weather, custom spreads
 - [ ] Monotype moveset tables and replay ingestion for the crystal-battle corpus
 - [ ] Validate the k8s manifests end to end
 - [ ] Query rewriting, conversation memory
