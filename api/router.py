@@ -20,6 +20,7 @@ _MATCHUP = re.compile(
     r"super effective|not very effective|effective against|weak (?:to|against)|resists?|immune|\bhits?\b", re.I)
 _SPEED_VS = re.compile(r"\bfaster\b|\boutspeeds?\b|\bslower\b", re.I)
 _SUPERLATIVE = re.compile(r"\b(fastest|slowest|highest|lowest|best|most|bulkiest)\b", re.I)
+_DAMAGE = re.compile(r"\bohko\b|\b\dhko\b|how much damage|damage does|\bkill\b", re.I)
 
 
 def _find_names(question: str, names, limit: int = 3) -> list[str]:
@@ -78,6 +79,24 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
             return tools.type_matchup(types[0], types[1])
         if len(types) == 1:
             return tools.defensive_profile(types[0])
+
+    # "does Garchomp's Earthquake OHKO Heatran" / "how much damage does X's Y do to Z"
+    if _DAMAGE.search(question) and len(mons) >= 2:
+        moves = _find_moves(question)
+        if moves:
+            q = question.lower()
+            move_pos = q.find(moves[0])
+            to_m = re.search(r"\bto\s+([a-z0-9' -]+)", q)
+            defender = next((m for m in mons if to_m and m in to_m.group(1)), None)
+            if defender:
+                attacker = next(m for m in mons if m != defender)
+            else:
+                attacker = min(mons, key=lambda m: abs(q.find(m) - move_pos))
+                defender = next(m for m in mons if m != attacker)
+            name, _ = tools.known_moves()[moves[0]]
+            p = tools.damage_calc(attacker, name, defender)
+            if p:
+                return p
 
     # "fastest Ghost-type Pokemon", "highest Attack among Water types"
     if _SUPERLATIVE.search(question) and types and not mons:

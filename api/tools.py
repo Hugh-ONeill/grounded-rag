@@ -77,6 +77,7 @@ def _data():
             "types": [t for _, t in sorted(p_types.get(r["id"], []))],
             "stats": p_stats.get(r["id"], {}),
             "abilities": p_abils.get(r["id"], []),
+            "weight_kg": int(r["weight"] or 0) / 10,
         }
     return {"chart": chart, "mons": mons, "moves": moves,
             "types": sorted(set(type_names.values()))}
@@ -203,3 +204,72 @@ def stat_query(stat: str, type_filter: str | None = None, n: int = 10,
              f"alternate forms included): "
              + ", ".join(f"{i}. {name} ({v})" for i, (v, name) in enumerate(rows, 1))]
     return [_passage("tool#stat_query", f"{order} {stat}: {scope}", lines[0])]
+
+
+# ---- damage calc (poke-engine) ------------------------------------------------
+
+def _engine_id(name: str) -> str:
+    return "".join(c for c in name.lower() if c.isalnum())
+
+
+def _level100_neutral(mon: dict):
+    """Final stats at level 100, 31 IVs, 0 EVs, neutral nature."""
+    s = mon["stats"]
+    hp = 2 * s.get("HP", 1) + 141
+    o = {k: 2 * s.get(k, 1) + 36 for k in
+         ("Attack", "Defense", "Special Attack", "Special Defense", "Speed")}
+    return hp, o
+
+
+def damage_calc(attacker: str, move: str, defender: str) -> list[dict]:
+    """Damage rolls for attacker using move into defender, via poke-engine.
+    Level 100, 31 IVs, 0 EVs, neutral natures, no items or abilities applied."""
+    try:
+        from poke_engine import State, Side, Pokemon, Move, calculate_damage
+    except ImportError:
+        return []
+    d = _data()
+    a, b = d["mons"].get(attacker.lower()), d["mons"].get(defender.lower())
+    move_entry = d["moves"].get(move.lower())
+    if not a or not b or not move_entry:
+        return []
+    move_name = move_entry[0]
+
+    def build(m, mv):
+        hp, o = _level100_neutral(m)
+        types = (m["types"] + ["typeless"])[:2]
+        return Pokemon(
+            id=_engine_id(m["name"]), level=100,
+            types=(types[0].lower(), types[1].lower()),
+            base_types=(types[0].lower(), types[1].lower()),
+            hp=hp, maxhp=hp,
+            attack=o["Attack"], defense=o["Defense"],
+            special_attack=o["Special Attack"], special_defense=o["Special Defense"],
+            speed=o["Speed"], weight_kg=m["weight_kg"],
+            moves=[Move(id=mv, pp=16)])
+
+    state = State(side_one=Side(pokemon=[build(a, _engine_id(move_name))]),
+                  side_two=Side(pokemon=[build(b, "tackle")]))
+    rolls = calculate_damage(state, _engine_id(move_name), "tackle", True)[0]
+    if not rolls:
+        lo = hi = 0
+    else:
+        lo, hi = min(rolls), max(rolls)
+    def_hp, _ = _level100_neutral(b)
+    lo_pct, hi_pct = 100 * lo / def_hp, 100 * hi / def_hp
+    if lo >= def_hp:
+        verdict = "a guaranteed OHKO"
+    elif hi >= def_hp:
+        verdict = f"a possible OHKO ({hi_pct:.0f}% max roll)"
+    elif lo > 0:
+        import math
+        n_hi, n_lo = math.ceil(def_hp / hi), math.ceil(def_hp / lo)
+        verdict = (f"a guaranteed {n_lo}HKO" if n_lo == n_hi
+                   else f"a {n_hi}-{n_lo}HKO depending on rolls")
+    else:
+        verdict = "no damage"
+    content = (f"Damage calculation via the poke-engine battle engine: {a['name']}'s "
+               f"{move_name} does {lo}-{hi} damage to {b['name']} ({lo_pct:.0f}-{hi_pct:.0f}% "
+               f"of its {def_hp} max HP): {verdict}. Assumptions: level 100, 31 IVs, 0 EVs, "
+               f"neutral natures, no items, abilities, or boosts applied.")
+    return [_passage("tool#damage_calc", f"{a['name']} {move_name} vs {b['name']}", content)]

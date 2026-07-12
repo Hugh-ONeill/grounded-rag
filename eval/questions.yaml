@@ -235,3 +235,11 @@
 - question: "Is Earthquake effective against Bronzong?"
   expect_source: "tool#type_matchup"
   expect_keywords: ["levitate"]
+
+- question: "Does Garchomp's Earthquake OHKO Heatran?"
+  expect_source: "tool#damage_calc"
+  expect_keywords: ["guaranteed", "ohko"]
+
+- question: "How much damage does Bullet Punch from Scizor do to Garganacl?"
+  expect_source: "tool#damage_calc"
+  expect_keywords: ["105", "157"]
