@@ -33,7 +33,7 @@ async def main():
 
     for item in questions:
         q = item["question"]
-        passages = await retrieve(q)
+        passages = await retrieve(q, corpus=item.get("corpus"))
 
         if item.get("no_answer"):
             refuse_total += 1

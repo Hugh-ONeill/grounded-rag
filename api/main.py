@@ -18,6 +18,7 @@ app.add_middleware(
 
 class AskRequest(BaseModel):
     question: str
+    corpus: str | None = None  # optional: scope retrieval to one corpus
 
 
 @app.get("/health")
@@ -32,7 +33,7 @@ async def ask(req: AskRequest):
     First event: the retrieved sources (so the UI can render citation chips).
     Then: answer tokens. If retrieval is too weak, we refuse instead of hallucinating.
     """
-    passages = await retrieve(req.question)
+    passages = await retrieve(req.question, corpus=req.corpus)
 
     async def gen():
         yield f"event: sources\ndata: {json.dumps(passages)}\n\n"

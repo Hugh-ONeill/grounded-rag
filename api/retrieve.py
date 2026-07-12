@@ -4,20 +4,26 @@ from embeddings import embed_one
 from config import settings
 
 
-async def retrieve(question: str, k: int | None = None) -> list[dict]:
-    """Return top-k chunks as dicts: {source, title, content, similarity}."""
+async def retrieve(question: str, k: int | None = None, corpus: str | None = None) -> list[dict]:
+    """Return top-k chunks as dicts: {corpus, source, title, content, similarity}.
+
+    corpus=None searches everything; pass a corpus name to scope the search.
+    """
     k = k or settings.top_k
     qvec = await embed_one(question)
+    where = "WHERE corpus = %s" if corpus else ""
+    params = [qvec] + ([corpus] if corpus else []) + [qvec, k]
     with connect() as conn, conn.cursor() as cur:
         # cosine distance -> similarity = 1 - distance
         cur.execute(
-            """
-            SELECT source, title, content, 1 - (embedding <=> %s::vector) AS similarity
+            f"""
+            SELECT corpus, source, title, content, 1 - (embedding <=> %s::vector) AS similarity
             FROM chunks
+            {where}
             ORDER BY embedding <=> %s::vector
             LIMIT %s
             """,
-            (qvec, qvec, k),
+            params,
         )
         cols = [c.name for c in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
