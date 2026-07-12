@@ -173,6 +173,15 @@ def _find_types(question: str) -> list[str]:
     return [t for _, t in sorted(found)]
 
 
+def find_entity_names(text: str, limit: int = 4) -> dict:
+    """Known Pokemon and move names appearing in free text. Used for
+    answer-driven source expansion: when the generated answer names an entity
+    (the priority move turns out to be Sucker Punch), that entity's own
+    documents join the cited sources."""
+    return {"pokemon": _find_names(text, tools.known_pokemon(), limit),
+            "moves": _find_names(text, tools.known_moves(), limit)}
+
+
 async def route(question: str, corpus: str | None = None) -> list[dict]:
     """Return passages for the question: from a tool when one clearly applies,
     otherwise from hybrid retrieval."""

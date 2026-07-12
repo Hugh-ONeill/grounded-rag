@@ -6,7 +6,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from retrieve import passes_threshold
-from router import route
+from router import route, find_entity_names
+import tools
 from llm import answer_stream
 
 REFUSAL = "I don't know based on the available sources."
@@ -42,8 +43,22 @@ async def ask(req: AskRequest):
             yield f"event: token\ndata: {json.dumps(REFUSAL)}\n\n"
             yield "event: done\ndata: {}\n\n"
             return
+        parts = []
         async for tok in answer_stream(req.question, passages):
+            parts.append(tok)
             yield f"event: token\ndata: {json.dumps(tok)}\n\n"
+        # answer-driven source expansion: entities the answer itself names get
+        # their documents added to the cited sources (a second `sources` event;
+        # the UI replaces its chips with the union)
+        try:
+            ents = find_entity_names("".join(parts))
+            seen = {p["source"] for p in passages}
+            extra = [doc for doc in tools.entity_docs(ents["pokemon"], ents["moves"])
+                     if doc["source"] not in seen]
+            if extra:
+                yield f"event: sources\ndata: {json.dumps(passages + extra)}\n\n"
+        except Exception:
+            pass
         yield "event: done\ndata: {}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")

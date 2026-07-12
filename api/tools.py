@@ -643,3 +643,18 @@ def survive_search(attacker: str, move: str, defender: str,
         supports.append(f"gen9ou_chaos#{b['name']}")
     return [_passage("tool#survive_search", f"{b['name']} vs {move_name}", "\n".join(lines))] \
         + _corpus_docs(supports)
+
+
+def entity_docs(pokemon: list[str], moves: list[str]) -> list[dict]:
+    """Canonical documents for named entities, across corpora (pokedex/move
+    entries plus their Bulbapedia articles), for answer-driven source expansion."""
+    d = _data()
+    sources = []
+    for m in pokemon:
+        name = d["mons"].get(m.lower(), {}).get("name", m)
+        sources += [f"pokedex#{name}", f"bulbapedia#{name} (Pokémon)"]
+    for mv in moves:
+        entry = d["moves"].get(mv.lower())
+        name = entry[0] if entry else mv
+        sources += [f"move#{name}", f"bulbapedia#{name} (move)"]
+    return _corpus_docs(sources)

@@ -122,7 +122,10 @@ correctly reported as unfixable by investment. The same search runs in reverse f
 "what would Garganacl need to survive Choice Band Garchomp's Earthquake?" escalates defensive
 nature, HP and defense EVs, Assault Vest, a screen, weather, and the best defensive Tera
 (picked from the type chart, including outright immunities) until the hit is survived.
-The damage tools also cross-reference their own answers against the rest of the corpus: a
+Sources follow the answer, not just the question: when the generated answer names an entity
+(the priority move turns out to be Sucker Punch), that entity's own documents — its data entry
+and its Bulbapedia article — are appended to the cited sources in a second SSE event. The
+damage tools also cross-reference their own answers against the rest of the corpus: a
 calc into Bronzong reports the raw numbers and then warns that Bronzong runs Levitate on 95%
 of its observed gen9ou sets, which makes it immune — the engine assumes no ability, and the
 tool says so instead of letting a technically-correct number mislead. When the immunity is
