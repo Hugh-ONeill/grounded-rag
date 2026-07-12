@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     corpus_path: str = "./docs"
     crystal_battle_path: str = ""
     pokeapi_path: str = ""
+    bulbapedia_cache: str = "~/.cache/grounded-rag/bulbapedia"
 
     ollama_host: str = "http://localhost:11434"
     embed_model: str = "nomic-embed-text"
@@ -40,6 +41,10 @@ class Settings(BaseSettings):
     # tops at 0.059. MiniLM chosen over bge-reranker-v2-m3, whose off-topic floor
     # (0.500) sat inside its answerable band.
     min_rerank_score: float = 0.08
+    # Added to a passage's rerank score when its title contains one of the
+    # question's rare (IDF-selected) terms: entity-titled docs must outrank
+    # generic definitional prose about the question's other nouns.
+    title_anchor_boost: float = 0.35
 
     # nomic-embed-text is 768-dim. Change if you swap embedding models.
     embed_dim: int = 768
