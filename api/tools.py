@@ -232,15 +232,19 @@ def _corpus_docs(sources: list[str]) -> list[dict]:
     return out
 
 
-def _ability_immunity_note(mon: dict, move_type: str, as_defender_option: bool = False) -> str | None:
-    """Cross-reference: does this Pokemon have a possible ability that negates the
-    incoming move type? If the usage-stats corpus has observed ability data for it,
-    cite the real split; otherwise report the possibility. The engine calc itself
-    assumes no ability, so this is the correction the raw numbers need."""
+GROUNDING = "Gravity, Smack Down, an Iron Ball, or a Mold Breaker attacker"
+
+
+def _ability_immunity(mon: dict, move_type: str) -> dict | None:
+    """Cross-reference: does this Pokemon have an ability that negates the incoming
+    move type? Returns {ability, sole, observed, certain}: `sole` when it is the
+    only possible ability in the dex data, `observed` from the usage-stats corpus,
+    and `certain` when either makes the immunity effectively unconditional."""
     blockers = [ab for ab in mon.get("abilities", []) if ABILITY_IMMUNITIES.get(ab) == move_type]
     if not blockers:
         return None
     ability = blockers[0]
+    sole = len(set(mon.get("abilities", []))) == 1
     observed = None
     try:
         from db import connect
@@ -256,15 +260,33 @@ def _ability_immunity_note(mon: dict, move_type: str, as_defender_option: bool =
                 observed = int(m.group(1))
     except Exception:
         pass
+    return {"ability": ability, "sole": sole, "observed": observed,
+            "certain": sole or (observed or 0) >= 99}
+
+
+def _immunity_reason(mon: dict, imm: dict) -> str:
+    if imm["sole"]:
+        return f"{imm['ability']} is {mon['name']}'s only possible ability"
+    if imm["observed"] is not None:
+        return f"{mon['name']} runs {imm['ability']} on {imm['observed']}% of its observed gen9ou sets"
+    return f"{mon['name']} can have {imm['ability']}"
+
+
+def _ability_immunity_note(mon: dict, move_type: str, as_defender_option: bool = False) -> str | None:
+    imm = _ability_immunity(mon, move_type)
+    if not imm:
+        return None
+    reason = _immunity_reason(mon, imm)
     if as_defender_option:
-        base = (f"Alternatively, {mon['name']} running the ability {ability} is simply immune "
-                f"to {move_type}-type moves, no investment needed")
-    else:
-        base = (f"Cross-reference: this calculation assumes no ability, but {mon['name']} can "
-                f"have {ability}, which makes it immune to {move_type}-type moves")
-    if observed is not None:
-        base += f" (observed on {observed}% of its sets in gen9ou usage data)"
-    return base + "."
+        if imm["certain"]:
+            return (f"In practice this is academic: {reason}, so it is outright immune to "
+                    f"{move_type}-type moves with no investment at all.")
+        return (f"Alternatively, {mon['name']} running {imm['ability']} is simply immune to "
+                f"{move_type}-type moves, no investment needed ({reason}).")
+    if imm["certain"]:
+        return None  # certain immunities are handled as the headline, not a footnote
+    return (f"Cross-reference: this calculation assumes no ability, but {reason}, "
+            f"which would make it immune to {move_type}-type moves.")
 
 
 # ---- damage calc (poke-engine) ------------------------------------------------
@@ -386,15 +408,25 @@ def damage_calc(attacker: str, move: str, defender: str,
         return f"{name} ({', '.join(bits)})" if bits else name
 
     applied = f" Weather: {weather}." if weather != "none" else ""
-    note = _ability_immunity_note(b, move_entry[1])
-    content = (f"Damage calculation via the poke-engine battle engine: "
-               f"{describe(a['name'], am)}'s {move_name} does {lo}-{hi} damage to "
-               f"{describe(b['name'], dm)} ({lo_pct:.0f}-{hi_pct:.0f}% of its {def_hp} max HP): "
-               f"{verdict}.{applied} Baseline assumptions unless stated: level 100, 31 IVs, "
-               f"0 EVs, neutral natures, no items or abilities."
-               + (f" {note}" if note else ""))
+    imm = _ability_immunity(b, move_entry[1])
+    if imm and imm["certain"] and lo > 0:
+        content = (f"Damage calculation via the poke-engine battle engine: no. "
+                   f"{_immunity_reason(b, imm)}, which makes it immune to "
+                   f"{move_entry[1]}-type moves, so {describe(a['name'], am)}'s {move_name} "
+                   f"normally does nothing. If the immunity is removed ({GROUNDING}), the "
+                   f"calculation applies: {lo}-{hi} damage ({lo_pct:.0f}-{hi_pct:.0f}% of its "
+                   f"{def_hp} max HP): {verdict}.{applied} Baseline assumptions unless stated: "
+                   f"level 100, 31 IVs, 0 EVs, neutral natures, no items.")
+    else:
+        note = _ability_immunity_note(b, move_entry[1])
+        content = (f"Damage calculation via the poke-engine battle engine: "
+                   f"{describe(a['name'], am)}'s {move_name} does {lo}-{hi} damage to "
+                   f"{describe(b['name'], dm)} ({lo_pct:.0f}-{hi_pct:.0f}% of its {def_hp} max HP): "
+                   f"{verdict}.{applied} Baseline assumptions unless stated: level 100, 31 IVs, "
+                   f"0 EVs, neutral natures, no items or abilities."
+                   + (f" {note}" if note else ""))
     supports = [f"pokedex#{a['name']}", f"pokedex#{b['name']}", f"move#{move_name}"]
-    if note:
+    if imm:
         supports.append(f"gen9ou_chaos#{b['name']}")
     return [_passage("tool#damage_calc", f"{a['name']} {move_name} vs {b['name']}", content)] \
         + _corpus_docs(supports)
@@ -479,11 +511,16 @@ def ohko_search(attacker: str, move: str, defender: str) -> list[dict]:
     else:
         lines.append("Verdict: not an OHKO even with maximum investment, item, weather, Tera, "
                      "and +6; this move cannot OHKO this target one-on-one.")
-    note = _ability_immunity_note(b, move_type)
-    if note:
-        lines.append(note + " In that case the whole escalation is moot.")
+    imm = _ability_immunity(b, move_type)
+    if imm and imm["certain"]:
+        lines.append(f"Important: {_immunity_reason(b, imm)}, so none of this lands unless the "
+                     f"immunity is removed ({GROUNDING}); with it removed, the escalation above applies.")
+    else:
+        note = _ability_immunity_note(b, move_type)
+        if note:
+            lines.append(note + " In that case the whole escalation is moot.")
     supports = [f"pokedex#{a['name']}", f"pokedex#{b['name']}", f"move#{move_name}"]
-    if note:
+    if imm:
         supports.append(f"gen9ou_chaos#{b['name']}")
     return [_passage("tool#ohko_search", f"{a['name']} {move_name} vs {b['name']}", "\n".join(lines))] \
         + _corpus_docs(supports)

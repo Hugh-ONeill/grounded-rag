@@ -283,3 +283,7 @@
 - question: "Does Garchomp's Earthquake OHKO Bronzong?"
   expect_source: "tool#damage_calc"
   expect_keywords: ["levitate"]
+
+- question: "Can Garchomp's Earthquake OHKO Rotom-Wash?"
+  expect_source: "tool#damage_calc"
+  expect_keywords: ["levitate", "gravity"]
