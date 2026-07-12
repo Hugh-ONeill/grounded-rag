@@ -140,7 +140,20 @@ async def retrieve_hybrid(question: str, k: int | None = None, corpus: str | Non
             bonus = settings.title_anchor_boost if any(t in title for t in rare) else 0.0
             return p.get("rerank_score", 0.0) + bonus
         reranked.sort(key=anchored, reverse=True)
-    return reranked[:k]
+    # diversity: entities now own many documents (pokedex, learnset, usage stats,
+    # several Bulbapedia sections), and top-k stuffed with one page's chunks
+    # starves the answer of its other sources. Cap chunks per page, backfill if short.
+    picked, overflow, per_page = [], [], {}
+    for p in reranked:
+        page = (p.get("source") or "").split(" §")[0]
+        if per_page.get(page, 0) < 2:
+            per_page[page] = per_page.get(page, 0) + 1
+            picked.append(p)
+        else:
+            overflow.append(p)
+        if len(picked) == k:
+            break
+    return (picked + overflow)[:k]
 
 
 _reranker = None
