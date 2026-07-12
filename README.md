@@ -116,7 +116,10 @@ items, natures, EV spreads, burn, weather, Tera), and "what would it take to OHK
 run a tiered escalation search: levers are applied cumulatively, largest structural choices
 first (nature, then EVs with IVs always assumed perfect, then item, then weather, Tera, and
 boosts), recomputing engine rolls at each rung until the KO is guaranteed, with immunities
-correctly reported as unfixable by investment. The tools also carry the conditional mechanics a raw type chart misses: a
+correctly reported as unfixable by investment. The same search runs in reverse for defenders:
+"what would Garganacl need to survive Choice Band Garchomp's Earthquake?" escalates defensive
+nature, HP and defense EVs, Assault Vest, a screen, weather, and the best defensive Tera
+(picked from the type chart, including outright immunities) until the hit is survived. The tools also carry the conditional mechanics a raw type chart misses: a
 Ground-vs-Flying immunity is reported together with its Gravity/Smack Down/Iron Ball and
 Roost variants (with recomputed multipliers), and ability-based immunities like Levitate are
 flagged from data. Deliberately not LLM function-calling: the router is a dozen lines of
@@ -133,17 +136,17 @@ the moment the corpus grew past what the vector leg could carry alone.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 63 gold questions (60 answerable, covering
+Run it yourself: `python -m eval.run_eval`. Over 65 gold questions (62 answerable, covering
 usage stats, corpus-wide aggregations, stat superlatives, species data, moves, abilities,
 items, learnsets, in-context comparisons, usage-versus-movepool intent, and computed answers:
 type matchups with conditional immunities, speed checks, typed stat queries, battle-state-aware
-engine damage calculations, and tiered OHKO escalation searches, plus 3 deliberately
-unanswerable), the current build scores:
+engine damage calculations, and tiered OHKO and survival escalation searches, plus 3
+deliberately unanswerable), the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (60/60) |
-| Answer faithfulness | 100% (56/56) |
+| Retrieval hit-rate@k | 100% (62/62) |
+| Answer faithfulness | 100% (58/58) |
 | Refusal precision (no-answer) | 100% (3/3) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
@@ -209,6 +212,7 @@ python -m venv .venv && .venv/bin/pip install -e ./api
 - [x] poke-engine damage calculator tool (neutral spreads, true engine rolls, n-HKO verdicts)
 - [x] Battle-state-aware calc inputs: boosts, setup moves, items, natures, EVs, burn, weather, Tera
 - [x] Tiered OHKO escalation search ("what would it take to OHKO?")
+- [x] Defensive escalation search ("what would it take to survive?")
 - [ ] Monotype moveset tables and replay ingestion for the crystal-battle corpus
 - [ ] Validate the k8s manifests end to end
 - [ ] Query rewriting, conversation memory

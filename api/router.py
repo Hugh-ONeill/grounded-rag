@@ -20,7 +20,9 @@ _MATCHUP = re.compile(
     r"super effective|not very effective|effective against|weak (?:to|against)|resists?|immune|\bhits?\b", re.I)
 _SPEED_VS = re.compile(r"\bfaster\b|\boutspeeds?\b|\bslower\b", re.I)
 _SUPERLATIVE = re.compile(r"\b(fastest|slowest|highest|lowest|best|most|bulkiest)\b", re.I)
-_DAMAGE = re.compile(r"\bohko\b|\b\dhko\b|how much damage|damage does|\bkill\b", re.I)
+_DAMAGE = re.compile(r"\bohko\b|\b\dhko\b|how much damage|damage does|\bkill\b|\bsurviv", re.I)
+_SURVIVE_HOW = re.compile(
+    r"(?:what would|what does|what do|how (?:can|could|do)|needs?|needed|required?|take[s]? (?:for|to)|make).{0,60}\b(?:survive|tank|withstand)\b", re.I)
 _OHKO_HOW = re.compile(
     r"(?:what would|what does|what do|how (?:can|could|do)|needs?|needed|required?|take[s]? (?:for|to)|make).{0,60}\bohko\b", re.I)
 
@@ -159,6 +161,19 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
             return tools.type_matchup(types[0], types[1])
         if len(types) == 1:
             return tools.defensive_profile(types[0])
+
+    # "what would X need to survive Y's Z" -> defensive escalation search
+    if _SURVIVE_HOW.search(question) and len(mons) >= 2:
+        q0, atk_mods, _dm, _wx = _parse_mods(question)
+        moves = _find_names(q0, tools.known_moves())
+        if moves:
+            move_pos = q0.find(moves[0])
+            attacker = min(mons, key=lambda m: abs(q0.find(m) - move_pos))
+            defender = next(m for m in mons if m != attacker)
+            name = tools.known_moves()[moves[0]][0]
+            p = tools.survive_search(attacker, name, defender, atk_mods)
+            if p:
+                return p
 
     # "what would it take for X's Y to OHKO Z" -> tiered escalation search
     if _OHKO_HOW.search(question) and len(mons) >= 2:

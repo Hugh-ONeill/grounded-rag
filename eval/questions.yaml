@@ -269,3 +269,12 @@
 - question: "How can Pikachu's Thunderbolt OHKO Gyarados?"
   expect_source: "tool#ohko_search"
   expect_keywords: ["modest"]
+
+# ---- Defensive escalation search (survive analysis, engine ground truth) ----
+- question: "What would Garganacl need to survive Choice Band Garchomp's Earthquake?"
+  expect_source: "tool#survive_search"
+  expect_keywords: ["tera flying"]
+
+- question: "How can Skarmory survive Heatran's Flamethrower?"
+  expect_source: "tool#survive_search"
+  expect_keywords: ["assault vest"]

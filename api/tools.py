@@ -233,7 +233,8 @@ def _level100_neutral(mon: dict, evs: dict | None = None, nature: tuple | None =
 def _calc_rolls(a: dict, move_name: str, b: dict, am: dict, dm: dict, weather: str):
     """Engine damage core: returns (lo, hi, defender_max_hp), or (None, None, None)."""
     try:
-        from poke_engine import State, Side, Pokemon, Move, Weather, calculate_damage
+        from poke_engine import (State, Side, SideConditions, Pokemon, Move, Weather,
+                                 calculate_damage)
     except ImportError:
         return None, None, None
 
@@ -256,7 +257,11 @@ def _calc_rolls(a: dict, move_name: str, b: dict, am: dict, dm: dict, weather: s
 
     def side(m, mv, mods):
         boosts = mods.get("boosts", {})
+        sc = SideConditions(reflect=5) if mods.get("screen") == "reflect" else (
+             SideConditions(light_screen=5) if mods.get("screen") == "light_screen"
+             else SideConditions())
         return Side(pokemon=[build(m, mv, mods)],
+                    side_conditions=sc,
                     attack_boost=boosts.get("Attack", 0),
                     defense_boost=boosts.get("Defense", 0),
                     special_attack_boost=boosts.get("Special Attack", 0),
@@ -409,3 +414,97 @@ def ohko_search(attacker: str, move: str, defender: str) -> list[dict]:
         lines.append("Verdict: not an OHKO even with maximum investment, item, weather, Tera, "
                      "and +6; this move cannot OHKO this target one-on-one.")
     return [_passage("tool#ohko_search", f"{a['name']} {move_name} vs {b['name']}", "\n".join(lines))]
+
+
+def survive_search(attacker: str, move: str, defender: str,
+                   attacker_mods: dict | None = None) -> list[dict]:
+    """What would defender need to survive attacker's move? The mirror of
+    ohko_search: defensive levers applied cumulatively, largest first (nature,
+    then HP EVs, then Def/SpD EVs, then item, then screen/weather/Tera),
+    recomputing engine rolls each rung. IVs always assumed perfect."""
+    d = _data()
+    a, b = d["mons"].get(attacker.lower()), d["mons"].get(defender.lower())
+    entry = d["moves"].get(move.lower())
+    if not a or not b or not entry:
+        return []
+    move_name, move_type, move_cls = entry
+    am = attacker_mods or {}
+    if move_cls == "status":
+        return [_passage("tool#survive_search", f"{b['name']} vs {move_name}",
+                         f"{move_name} is a status move; it deals no damage, so {b['name']} "
+                         f"always survives it directly.")]
+    phys = move_cls == "physical"
+    def_stat = "Defense" if phys else "Special Defense"
+    nature_label = "Bold (+Defense)" if phys else "Calm (+Sp. Def)"
+    nature = ("Defense", "Attack") if phys else ("Special Defense", "Attack")
+    screen = ("reflect", "Reflect") if phys else ("light_screen", "Light Screen")
+
+    atk_desc = []
+    if am.get("nature"): atk_desc.append(f"+{am['nature'][0]} nature")
+    if am.get("evs"): atk_desc += [f"{n} {s} EVs" for s, n in am["evs"].items()]
+    if am.get("item"): atk_desc.append(am["item"])
+    if am.get("boosts"): atk_desc += [f"+{n} {s}" for s, n in am["boosts"].items()]
+    atk_str = f"{a['name']} ({', '.join(atk_desc)})" if atk_desc else f"{a['name']} (uninvested)"
+
+    dm: dict = {}
+    lo, hi, def_hp = _calc_rolls(a, move_name, b, am, dm, "none")
+    if lo is None:
+        return []
+    header = (f"Survival analysis via the poke-engine battle engine: can {b['name']} survive "
+              f"{atk_str}'s {move_name}? Both level 100, 31 IVs.")
+    if hi < def_hp:
+        return [_passage("tool#survive_search", f"{b['name']} vs {move_name}",
+                         f"{header} Yes, even uninvested: {lo}-{hi} damage into {def_hp} HP "
+                         f"({100*lo/def_hp:.0f}-{100*hi/def_hp:.0f}%), a guaranteed survive.")]
+
+    lines = [header,
+             f"Uninvested: {lo}-{hi} into {def_hp} HP ({100*lo/def_hp:.0f}-{100*hi/def_hp:.0f}%): "
+             + ("KO on a high roll." if lo < def_hp else "a guaranteed KO."),
+             "Defensive escalation, largest levers first:"]
+    steps = [(nature_label, lambda: dm.update(nature=nature)),
+             ("252 HP EVs", lambda: dm.setdefault("evs", {}).update({"HP": 252})),
+             (f"252 {def_stat} EVs", lambda: dm.setdefault("evs", {}).update({def_stat: 252}))]
+    if not phys:
+        steps.append(("Assault Vest", lambda: dm.update(item="Assault Vest")))
+    steps.append((screen[1], lambda: dm.update(screen=screen[0])))
+    wx_step = None
+    if not phys and "Rock" in b["types"]:
+        wx_step = "sand"
+    elif phys and "Ice" in b["types"]:
+        wx_step = "snow"
+    if wx_step:
+        steps.append((f"in {wx_step}", None))
+    best_tera = min(d["types"], key=lambda tt: (d["chart"].get((move_type, tt), 1.0), tt))
+    if d["chart"].get((move_type, best_tera), 1.0) < 1.0:
+        steps.append((f"Tera {best_tera}", lambda: dm.update(tera=best_tera.lower())))
+
+    wx = "none"
+    survives_at = maybe_at = None
+    applied = []
+    for label, apply in steps:
+        if apply:
+            apply()
+        else:
+            wx = wx_step
+        applied.append(label)
+        lo, hi, def_hp = _calc_rolls(a, move_name, b, am, dm, wx)
+        pct = f"{100*lo/def_hp:.0f}-{100*hi/def_hp:.0f}%"
+        if maybe_at is None and lo < def_hp:
+            maybe_at = list(applied)
+        if hi < def_hp:
+            survives_at = list(applied)
+            lines.append(f"- + {label}: {lo}-{hi} ({pct}): guaranteed survive.")
+            break
+        lines.append(f"- + {label}: {lo}-{hi} ({pct})")
+    if survives_at:
+        lines.append(f"Verdict: guaranteed survival requires {', '.join(survives_at)} "
+                     f"(applied cumulatively).")
+        if maybe_at and maybe_at != survives_at:
+            lines.append(f"Low rolls are survivable from {', '.join(maybe_at)}.")
+    elif maybe_at:
+        lines.append(f"Verdict: survival is roll-dependent at best, from {', '.join(maybe_at)}; "
+                     f"never guaranteed with these levers.")
+    else:
+        lines.append("Verdict: not survivable one-on-one even with full defensive investment, "
+                     "a screen, and the best defensive Tera.")
+    return [_passage("tool#survive_search", f"{b['name']} vs {move_name}", "\n".join(lines))]
