@@ -40,6 +40,28 @@ def health():
     return {"ok": True}
 
 
+@app.post("/retrieve")
+async def retrieve(req: AskRequest):
+    """Passages only, no generation — for clients that narrate themselves.
+
+    An external character (an AIRI commentator, an agent) already owns a voice;
+    piping /ask's Gemma narration through it would be a second LLM fighting the
+    first. This returns the same routed passages and tool outputs as /ask, plus
+    the gate verdict, and skips the slow part: tool questions come back in
+    milliseconds. History condenses follow-ups exactly as /ask does.
+    """
+    question = req.question
+    if req.history:
+        question = await condense_question(req.question, [t.model_dump() for t in req.history])
+    passages = await route(question, corpus=req.corpus)
+    return {
+        "question": req.question,
+        "standalone": question,
+        "answerable": passes_threshold(passages),
+        "passages": passages,
+    }
+
+
 @app.post("/ask")
 async def ask(req: AskRequest):
     """Stream a cited answer as Server-Sent Events.
