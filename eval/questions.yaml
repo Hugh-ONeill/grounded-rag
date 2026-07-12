@@ -184,3 +184,16 @@
 - question: "Which move is stronger, Earthquake or Earth Power?"
   expect_source: "move#Earth Power"
   expect_keywords: ["100", "90"]
+
+# ---- Stat superlatives (answered by synthetic stat-rankings documents) ----
+- question: "Which is the fastest Pokemon?"
+  expect_source: "stat_rankings#Speed"
+  expect_keywords: ["regieleki"]
+
+- question: "Which Pokemon has the highest base Attack?"
+  expect_source: "stat_rankings#Attack"
+  expect_keywords: ["mewtwo"]
+
+- question: "What Pokemon has the highest base stat total?"
+  expect_source: "stat_rankings#Base stat total"
+  expect_keywords: ["eternatus"]

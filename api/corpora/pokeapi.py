@@ -219,6 +219,53 @@ def load():
             "metadata": {"kind": "item", "category": item_cats.get(r["category_id"], "")},
         }
 
+    # ---- Stat rankings (one per base stat + total) ----
+    # Corpus-wide superlatives ("which is the fastest Pokemon?") are unanswerable
+    # by top-k retrieval: no species chunk contains the comparison. Same fix as
+    # the usage rankings: make each ranking a citable document. Alternate forms
+    # (megas, Deoxys-Speed) are included, since they hold many of the records.
+    STAT_PHRASE = {
+        "Speed": "the fastest Pokemon (highest base Speed)",
+        "Attack": "the strongest physical attackers (highest base Attack)",
+        "Defense": "the most physically defensive Pokemon (highest base Defense)",
+        "Special Attack": "the strongest special attackers (highest base Special Attack)",
+        "Special Defense": "the most specially defensive Pokemon (highest base Special Defense)",
+        "HP": "the Pokemon with the most HP (highest base HP)",
+    }
+    stat_values = {}  # display stat name -> [(value, pokemon name)]
+    totals = []
+    for pid, stats in p_stats.items():
+        name = pokemon_display.get(pid)
+        if not name or not stats:
+            continue
+        for sid, v in stats.items():
+            stat_values.setdefault(stat_names[sid], []).append((int(v), name))
+        totals.append((sum(int(v) for v in stats.values()), name))
+    for stat, phrase in STAT_PHRASE.items():
+        ranked = sorted(stat_values.get(stat, []), reverse=True)[:25]
+        if not ranked:
+            continue
+        top_v, top_n = ranked[0]
+        lines = [f"{stat} rankings: {phrase}, across all Pokemon including alternate forms.",
+                 f"{top_n} has the highest base {stat} of any Pokemon, at {top_v}."]
+        lines += [f"{i}. {n} ({v})" for i, (v, n) in enumerate(ranked, 1)]
+        yield {
+            "source": f"stat_rankings#{stat}",
+            "title": f"{stat} rankings",
+            "content": "\n".join(lines),
+            "metadata": {"kind": "stat_rankings", "stat": stat},
+        }
+    ranked = sorted(totals, reverse=True)[:25]
+    lines = ["Base stat total rankings: the Pokemon with the strongest overall base stats.",
+             f"{ranked[0][1]} has the highest base stat total of any Pokemon, at {ranked[0][0]}."]
+    lines += [f"{i}. {n} ({v})" for i, (v, n) in enumerate(ranked, 1)]
+    yield {
+        "source": "stat_rankings#Base stat total",
+        "title": "Base stat total rankings",
+        "content": "\n".join(lines),
+        "metadata": {"kind": "stat_rankings", "stat": "total"},
+    }
+
     # PokeAPI's item text coverage ends before gen 9: Scarlet/Violet items exist in
     # item_names.csv but have no English prose or flavor text at all. These are the
     # most competitively relevant items, so their effects are transcribed by hand.
