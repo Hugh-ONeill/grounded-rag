@@ -8,6 +8,7 @@ system answers things like "what beats Great Tusk?" from actual ladder data, wit
 Set CRYSTAL_BATTLE_PATH in .env. Robust to missing files (only yields what it finds).
 """
 import json
+import re
 from pathlib import Path
 from config import settings
 
@@ -36,7 +37,7 @@ def _species_doc(name: str, s: dict, fmt: str, types: dict):
     raw = (sum(s.get("Abilities", {}).values()) or sum(s.get("Items", {}).values())
            or s.get("Raw count") or 1)
     typ = " / ".join(types.get(name, [])) if types else ""
-    lines = [f"{name}" + (f" ({typ}-type)" if typ else "") + f" — {fmt} usage data."]
+    lines = [f"{name}" + (f" ({typ}-type)" if typ else "") + f" — {_pretty_fmt(fmt)} usage data."]
     if s.get("usage") is not None:
         lines.append(f"Usage: {100*s['usage']:.1f}% of teams.")
     for label, key, denom in [
@@ -64,6 +65,13 @@ def _species_doc(name: str, s: dict, fmt: str, types: dict):
     }
 
 
+def _pretty_fmt(fmt: str) -> str:
+    """gen2ou -> "Gen 2 OU (gen2ou)": questions say the spaced form, exact-token
+    search needs the tag, so documents carry both."""
+    m = re.match(r"gen(\d+)(\w+)", fmt)
+    return f"Gen {m.group(1)} {m.group(2).upper()} ({fmt})" if m else fmt
+
+
 def _rankings_doc(fmt: str, data: dict):
     """Synthetic aggregation document. Top-k similarity retrieval cannot answer
     corpus-wide superlatives ("what is the most used Pokemon?"): no single species
@@ -74,8 +82,10 @@ def _rankings_doc(fmt: str, data: dict):
         return None
     top_name, top_stats = ranked[0]
     lines = [
-        f"{fmt} usage rankings: the most used Pokemon in {fmt}, ranked by share of teams.",
-        f"The most used Pokemon in {fmt} is {top_name}, on {100*(top_stats.get('usage') or 0):.1f}% of teams.",
+        f"{_pretty_fmt(fmt)} usage rankings: the most used Pokemon in {_pretty_fmt(fmt)}, "
+        f"ranked by the share of teams they appear on.",
+        f"The most used Pokemon in {_pretty_fmt(fmt)} is {top_name}, appearing on "
+        f"{100*(top_stats.get('usage') or 0):.1f}% of teams.",
     ]
     lines += [f"{i}. {n} ({100*(s.get('usage') or 0):.1f}%)" for i, (n, s) in enumerate(ranked, 1)]
     return {
