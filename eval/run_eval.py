@@ -14,7 +14,8 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "api"))
-from retrieve import retrieve_hybrid, passes_threshold   # noqa: E402
+from retrieve import passes_threshold
+from router import route   # noqa: E402
 from llm import answer_stream                       # noqa: E402
 
 
@@ -33,7 +34,7 @@ async def main():
 
     for item in questions:
         q = item["question"]
-        passages = await retrieve_hybrid(q, corpus=item.get("corpus"))
+        passages = await route(q, corpus=item.get("corpus"))
 
         if item.get("no_answer"):
             refuse_total += 1

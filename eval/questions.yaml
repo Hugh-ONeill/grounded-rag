@@ -206,3 +206,32 @@
 - question: "What moves can Marowak learn?"
   expect_source: "learnset#Marowak"
   expect_keywords: []
+
+# ---- Computed answers (router -> deterministic tools; engine ground truth) ----
+- question: "Is Earthquake effective against Skarmory?"
+  expect_source: "tool#type_matchup"
+  expect_keywords: ["no effect"]
+
+- question: "What is super effective against Garchomp?"
+  expect_source: "tool#type_matchup"
+  expect_keywords: ["ice"]
+
+- question: "Who is faster, Garchomp or Dragapult?"
+  expect_source: "tool#speed_check"
+  expect_keywords: ["dragapult", "142"]
+
+- question: "What is the fastest Ghost-type Pokemon?"
+  expect_source: "tool#stat_query"
+  expect_keywords: ["absol"]
+
+- question: "Which Water-type Pokemon has the highest base Attack?"
+  expect_source: "tool#stat_query"
+  expect_keywords: ["palafin"]
+
+- question: "Can Earthquake hit Skarmory under Gravity?"
+  expect_source: "tool#type_matchup"
+  expect_keywords: ["gravity", "2x"]
+
+- question: "Is Earthquake effective against Bronzong?"
+  expect_source: "tool#type_matchup"
+  expect_keywords: ["levitate"]

@@ -1,0 +1,205 @@
+"""Deterministic tools: computed answers rendered as citable pseudo-passages.
+
+Retrieval answers "what does the corpus say"; these answer "what does the math
+say". Each tool returns passages shaped like retrieval results (source, title,
+content) with rerank_score 1.0, so the gate, the citation prompt, and the eval
+all work unchanged. Data comes straight from the PokeAPI CSVs (same checkout
+the corpus adapter reads).
+"""
+import csv
+from functools import lru_cache
+from pathlib import Path
+from config import settings
+
+EN = "9"
+
+
+def _passage(source: str, title: str, content: str) -> dict:
+    return {"source": source, "title": title, "content": content,
+            "similarity": 1.0, "kw_rank": 0.0, "rerank_score": 1.0}
+
+
+@lru_cache(maxsize=1)
+def _data():
+    """Load pokemon (incl. forms), stats, types, and the type chart once."""
+    csvdir = Path(settings.pokeapi_path) / "data" / "v2" / "csv"
+
+    def rows(name):
+        with open(csvdir / f"{name}.csv", newline="", encoding="utf-8") as f:
+            yield from csv.DictReader(f)
+
+    type_names = {r["type_id"]: r["name"] for r in rows("type_names")
+                  if r["local_language_id"] == EN and int(r["type_id"]) < 10000}
+    # damage_factor is percent: 0 / 50 / 100 / 200
+    chart = {}
+    for r in rows("type_efficacy"):
+        att, dfn = type_names.get(r["damage_type_id"]), type_names.get(r["target_type_id"])
+        if att and dfn:
+            chart[(att, dfn)] = int(r["damage_factor"]) / 100
+
+    species_name = {r["pokemon_species_id"]: r["name"] for r in rows("pokemon_species_names")
+                    if r["local_language_id"] == EN}
+    stat_names = {"1": "HP", "2": "Attack", "3": "Defense",
+                  "4": "Special Attack", "5": "Special Defense", "6": "Speed"}
+    p_stats, p_types = {}, {}
+    for r in rows("pokemon_stats"):
+        p_stats.setdefault(r["pokemon_id"], {})[stat_names.get(r["stat_id"], "?")] = int(r["base_stat"])
+    for r in rows("pokemon_types"):
+        t = type_names.get(r["type_id"])
+        if t:
+            p_types.setdefault(r["pokemon_id"], []).append((int(r["slot"]), t))
+
+    ability_names = {r["ability_id"]: r["name"] for r in rows("ability_names")
+                     if r["local_language_id"] == EN}
+    p_abils = {}
+    for r in rows("pokemon_abilities"):
+        a = ability_names.get(r["ability_id"])
+        if a:
+            p_abils.setdefault(r["pokemon_id"], []).append(a)
+
+    move_names = {r["move_id"]: r["name"] for r in rows("move_names")
+                  if r["local_language_id"] == EN}
+    moves = {}  # lowercase move name -> (Name, type)
+    for r in rows("moves"):
+        name, typ = move_names.get(r["id"]), type_names.get(r["type_id"])
+        if name and typ:
+            moves[name.lower()] = (name, typ)
+
+    def pretty(ident):
+        return "-".join(p.capitalize() for p in ident.split("-"))
+
+    mons = {}  # lowercase display name -> {name, types, stats}
+    for r in rows("pokemon"):
+        name = (species_name.get(r["species_id"], pretty(r["identifier"]))
+                if r["is_default"] == "1" else pretty(r["identifier"]))
+        mons[name.lower()] = {
+            "name": name,
+            "types": [t for _, t in sorted(p_types.get(r["id"], []))],
+            "stats": p_stats.get(r["id"], {}),
+            "abilities": p_abils.get(r["id"], []),
+        }
+    return {"chart": chart, "mons": mons, "moves": moves,
+            "types": sorted(set(type_names.values()))}
+
+
+def known_pokemon() -> dict:
+    return _data()["mons"]
+
+
+def known_types() -> list[str]:
+    return _data()["types"]
+
+
+def known_moves() -> dict:
+    return _data()["moves"]
+
+
+# Abilities that negate or absorb an attacking type; the type chart alone
+# misses these (Bronzong shrugs off Earthquake via Levitate).
+ABILITY_IMMUNITIES = {
+    "Levitate": "Ground", "Earth Eater": "Ground",
+    "Flash Fire": "Fire", "Well-Baked Body": "Fire",
+    "Water Absorb": "Water", "Storm Drain": "Water", "Dry Skin": "Water",
+    "Volt Absorb": "Electric", "Lightning Rod": "Electric", "Motor Drive": "Electric",
+    "Sap Sipper": "Grass", "Wind Rider": "Flying",
+}
+
+
+# ---- tools ------------------------------------------------------------------
+
+def type_matchup(attacking_type: str, defender: str, via_move: str | None = None) -> list[dict]:
+    """Effectiveness of an attacking type into a defender (Pokemon name or type)."""
+    d = _data()
+    att = attacking_type.capitalize()
+    mon = d["mons"].get(defender.lower())
+    def_types = mon["types"] if mon else [defender.capitalize()]
+    mult = 1.0
+    parts = []
+    for t in def_types:
+        f = d["chart"].get((att, t), 1.0)
+        mult *= f
+        parts.append(f"{f:g}x vs {t}")
+    target = f"{mon['name']} ({' / '.join(def_types)})" if mon else def_types[0]
+    verdict = ("has no effect on" if mult == 0 else
+               "is super effective against" if mult > 1 else
+               "is not very effective against" if mult < 1 else
+               "deals neutral damage to")
+    prefix = f"{via_move} is a {att}-type move. " if via_move else ""
+    lines = [f"Type matchup, computed from the type chart: {prefix}{att} {verdict} {target}, "
+             f"overall {mult:g}x ({', '.join(parts)})."]
+
+    # a Ground-vs-Flying immunity is conditional, not absolute
+    if att == "Ground" and "Flying" in def_types and mult == 0:
+        grounded = 1.0
+        for t2 in def_types:
+            grounded *= 1.0 if t2 == "Flying" else d["chart"].get((att, t2), 1.0)
+        roost_types = [t2 for t2 in def_types if t2 != "Flying"] or ["Normal"]
+        roosted = 1.0
+        for t2 in roost_types:
+            roosted *= d["chart"].get((att, t2), 1.0)
+        name = mon["name"] if mon else "the defender"
+        lines.append(
+            f"This immunity is conditional: if {name} is grounded (Gravity, Smack Down, "
+            f"Thousand Arrows, or holding an Iron Ball), Ground moves hit for {grounded:g}x; "
+            f"during a turn {name} uses Roost it loses its Flying type and takes {roosted:g}x.")
+    # the chart cannot see ability-based immunities
+    if mon:
+        blockers = [a for a in mon.get("abilities", []) if ABILITY_IMMUNITIES.get(a) == att]
+        if blockers and mult > 0:
+            lines.append(f"Note: {mon['name']} can have the ability {', '.join(blockers)}, "
+                         f"which negates or absorbs {att}-type moves entirely.")
+    return [_passage(f"tool#type_matchup", f"{att} vs {target}", "\n".join(lines))]
+
+
+def defensive_profile(defender: str) -> list[dict]:
+    """What is super effective / resisted / immune against a Pokemon or type."""
+    d = _data()
+    mon = d["mons"].get(defender.lower())
+    def_types = mon["types"] if mon else [defender.capitalize()]
+    target = f"{mon['name']} ({' / '.join(def_types)})" if mon else def_types[0]
+    buckets = {}
+    for att in d["types"]:
+        mult = 1.0
+        for t in def_types:
+            mult *= d["chart"].get((att, t), 1.0)
+        buckets.setdefault(mult, []).append(att)
+    lines = [f"Defensive type profile of {target}, computed from the type chart:"]
+    for mult in sorted(buckets, reverse=True):
+        if mult != 1.0:
+            label = {0.0: "immune to"}.get(mult, f"takes {mult:g}x from")
+            lines.append(f"- {label}: {', '.join(buckets[mult])}")
+    return [_passage(f"tool#type_matchup", f"defensive profile: {target}", "\n".join(lines))]
+
+
+def speed_check(name_a: str, name_b: str) -> list[dict]:
+    """Compare two Pokemon's base Speed."""
+    d = _data()
+    a, b = d["mons"].get(name_a.lower()), d["mons"].get(name_b.lower())
+    if not a or not b:
+        return []
+    sa, sb = a["stats"].get("Speed", 0), b["stats"].get("Speed", 0)
+    faster = a if sa > sb else b
+    verdict = (f"{faster['name']} is faster at base stats" if sa != sb
+               else "they are tied at base stats")
+    content = (f"Base Speed comparison, computed from base stats: {a['name']} has base Speed "
+               f"{sa}, {b['name']} has base Speed {sb}; {verdict}. Note: items (Choice Scarf), "
+               f"natures, EVs, and boosts change effective speed in battle.")
+    return [_passage("tool#speed_check", f"{a['name']} vs {b['name']} speed", content)]
+
+
+def stat_query(stat: str, type_filter: str | None = None, n: int = 10,
+               lowest: bool = False) -> list[dict]:
+    """Top-N Pokemon by a base stat, optionally filtered to one type."""
+    d = _data()
+    rows = [(m["stats"].get(stat, 0), m["name"]) for m in d["mons"].values()
+            if m["stats"] and (not type_filter or type_filter.capitalize() in m["types"])]
+    rows.sort(reverse=not lowest)
+    rows = rows[:n]
+    if not rows:
+        return []
+    scope = f"{type_filter.capitalize()}-type Pokemon" if type_filter else "all Pokemon"
+    order = "lowest" if lowest else "highest"
+    lines = [f"{order.capitalize()} base {stat} among {scope} (computed from base stats, "
+             f"alternate forms included): "
+             + ", ".join(f"{i}. {name} ({v})" for i, (v, name) in enumerate(rows, 1))]
+    return [_passage("tool#stat_query", f"{order} {stat}: {scope}", lines[0])]
