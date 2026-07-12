@@ -35,8 +35,14 @@ def init_schema():
             ON chunks USING hnsw (embedding vector_cosine_ops)
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS chunks_corpus ON chunks (corpus)")
-        # For V2 hybrid retrieval, add a full-text index:
-        # cur.execute("CREATE INDEX IF NOT EXISTS chunks_fts ON chunks USING gin (to_tsvector('english', content))")
+        # weighted full-text index for the hybrid keyword leg (titles weigh most:
+        # named entities like "Sitrus Berry" should match a doc's title, not its body)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS chunks_fts ON chunks USING gin (
+                (setweight(to_tsvector('english', coalesce(title,'')), 'A') ||
+                 setweight(to_tsvector('english', content), 'B'))
+            )
+        """)
         conn.commit()
 
 

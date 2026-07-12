@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # corpus grows; the margin narrowed from ~0.10 to ~0.02). A score-based gate
     # (reranker) is the durable fix -- see roadmap.
     min_similarity: float = 0.66
+    # Second gate signal: weighted keyword rank of the best passage. Entity-named
+    # questions ("Is a Sitrus Berry better...") measure >=0.32 via title matches;
+    # vocabulary coincidences ("boiling point of water" -> Water Gem) cap at ~0.18.
+    min_keyword_rank: float = 0.25
 
     # nomic-embed-text is 768-dim. Change if you swap embedding models.
     embed_dim: int = 768

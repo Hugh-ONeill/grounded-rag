@@ -175,3 +175,12 @@
 - question: "What do Heavy-Duty Boots protect against?"
   expect_source: "item#Heavy-Duty Boots"
   expect_keywords: ["trap"]
+
+# ---- In-context comparisons (hybrid retrieval fetches both named entities) ----
+- question: "Is a Sitrus Berry better than an Oran Berry?"
+  expect_source: "item#Sitrus Berry"
+  expect_keywords: ["sitrus", "oran"]
+
+- question: "Which move is stronger, Earthquake or Earth Power?"
+  expect_source: "move#Earth Power"
+  expect_keywords: ["100", "90"]

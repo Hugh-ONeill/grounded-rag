@@ -24,16 +24,16 @@ Every answer is grounded in numbered passages, so you can see exactly where it c
 ```
 Documents → Chunk (overlap + metadata) → Embed (Ollama) → Postgres + pgvector
                                                                │
-Query → Embed → Vector retrieve (cosine top-k) → "I don't know" gate
+Query → Embed → Hybrid retrieve (vector + keyword, RRF) → "I don't know" gate
                                                                │
                        Gemma (Ollama) + retrieved context → answer + [citations]
                                                                │
                                   eval/ harness → hit-rate@k, faithfulness, refusal
 ```
 
-Hybrid retrieval (vector + BM25) and cross-encoder reranking are roadmap items; their
-signatures are already stubbed in [`api/retrieve.py`](api/retrieve.py). See
-[docs/architecture.md](docs/architecture.md) for the detailed flow.
+Cross-encoder reranking is the remaining roadmap item; its signature is stubbed in
+[`api/retrieve.py`](api/retrieve.py). See [docs/architecture.md](docs/architecture.md) for
+the detailed flow.
 
 ## Stack & rationale
 
@@ -63,10 +63,14 @@ to 0.30, and the eval immediately reported 0% refusal precision: cosine similari
 Measured bands on the first corpus (on-topic 0.64 to 0.78, off-topic 0.40 to 0.54) put the
 threshold at 0.60. Then the corpus grew 10x with the PokeAPI adapter and the eval caught the
 gate breaking again: "What is the boiling point of water?" started retrieving Hydro Steam, a
-Water-type move about boiling water, at 0.649. The threshold now sits at 0.66, but the margin
-between bands narrowed from ~0.10 to ~0.02, which is the measured argument for replacing the
-raw-similarity gate with a reranker score (roadmap). Without an eval, none of this drift would
-have been visible.
+Water-type move about boiling water, at 0.649. The threshold moved to 0.66 and the margin
+between bands narrowed from ~0.10 to ~0.02. Then it closed entirely: "Is a Sitrus Berry better
+than an Oran Berry?" tops out at 0.639 while the boiling-point question reaches 0.649, so no
+similarity threshold can separate them. The gate now has a second signal: a strong weighted
+keyword match (an entity name hitting a document title) also opens it, with measured bands of
+its own (entity-named questions >=0.32, vocabulary coincidences <=0.18). A calibrated reranker
+score remains the roadmap endgame. Without an eval, none of this drift would have been
+visible.
 
 **Aggregation questions get synthetic rankings documents.** "What is the most used Pokemon?"
 is a corpus-wide comparison, and no single species chunk contains the answer, so top-k
@@ -83,23 +87,27 @@ as `[n]`, and is instructed to refuse rather than invent. Thinking mode is disab
 (`think: false`): factual extraction does not benefit from it and it is roughly 10x slower
 for this shape of answer.
 
-**Retrieval is deliberately simple, and the cracks are now measured.** Pure vector search
-still scores 100% hit-rate on the gold set, but the multi-corpus index showed the first real
-strain: a species' learnset, Pokedex, and usage-stats documents are near-neighbors of each
-other, so top-5 filled with same-family documents and starved the generator of the right one
-(fixed for now by k=8), and the refusal margin thinned as topically-adjacent chunks crept up.
-Hybrid retrieval and reranking are next, justified by measurements instead of buzzwords.
+**Hybrid retrieval was added when the measurements demanded it, not before.** Pure vector
+search carried a 100% hit-rate until the corpus grew and comparison questions arrived:
+"Is a Sitrus Berry better than an Oran Berry?" names two exact entities, but the chatty
+phrasing dilutes the embedding below the refusal threshold, while an off-topic question with
+adjacent vocabulary scores higher. The keyword leg (Postgres full-text, titles weighted
+heaviest, OR semantics so multi-entity comparisons match) catches exactly what the vector leg
+dilutes; reciprocal rank fusion merges the two. The same keyword rank doubles as the gate's
+second signal. Comparisons between things in context are also explicitly permitted by the
+prompt, which previously blocked them along with corpus-wide superlatives.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 41 gold questions spanning both corpora
-(38 answerable, covering usage stats, corpus-wide aggregations, species data, moves,
-abilities, items, and learnsets, plus 3 deliberately unanswerable), the current build scores:
+Run it yourself: `python -m eval.run_eval`. Over 43 gold questions spanning both corpora
+(40 answerable, covering usage stats, corpus-wide aggregations, species data, moves,
+abilities, items, learnsets, and in-context comparisons, plus 3 deliberately unanswerable),
+the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (38/38) |
-| Answer faithfulness | 100% (35/35) |
+| Retrieval hit-rate@k | 100% (40/40) |
+| Answer faithfulness | 100% (37/37) |
 | Refusal precision (no-answer) | 100% (3/3) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
@@ -154,7 +162,8 @@ python -m venv .venv && .venv/bin/pip install -e ./api
 - [x] Streaming responses (SSE)
 - [x] "I don't know" threshold, tuned via the eval
 - [x] Eval harness with published numbers
-- [ ] Hybrid retrieval (vector + BM25) and cross-encoder reranking
+- [x] Hybrid retrieval (vector + weighted full-text, reciprocal rank fusion)
+- [ ] Cross-encoder reranking (also the durable replacement for the threshold gate)
 - [ ] Monotype moveset tables and replay ingestion for the crystal-battle corpus
 - [ ] Validate the k8s manifests end to end
 - [ ] Query rewriting, conversation memory

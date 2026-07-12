@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from retrieve import retrieve, passes_threshold
+from retrieve import retrieve_hybrid, passes_threshold
 from llm import answer_stream
 
 REFUSAL = "I don't know based on the available sources."
@@ -33,7 +33,7 @@ async def ask(req: AskRequest):
     First event: the retrieved sources (so the UI can render citation chips).
     Then: answer tokens. If retrieval is too weak, we refuse instead of hallucinating.
     """
-    passages = await retrieve(req.question, corpus=req.corpus)
+    passages = await retrieve_hybrid(req.question, corpus=req.corpus)
 
     async def gen():
         yield f"event: sources\ndata: {json.dumps(passages)}\n\n"
