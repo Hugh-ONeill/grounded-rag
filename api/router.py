@@ -27,7 +27,8 @@ def _find_names(question: str, names, limit: int = 3) -> list[str]:
     """Word-boundary matches of known names in the question, longest first
     (prefers "marowak-alola" over "marowak"; "unknown" must not match Unown)."""
     q = question.lower()
-    hits = [n for n in names if re.search(rf"\b{re.escape(n)}\b", q)]
+    # tolerate possessives with or without the apostrophe ("garchomps earthquake")
+    hits = [n for n in names if re.search(rf"\b{re.escape(n)}(?:['\u2019]s|s)?\b", q)]
     hits.sort(key=len, reverse=True)
     out = []
     for h in hits:
