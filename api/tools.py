@@ -470,24 +470,80 @@ _KEY_ROLES = ["hazard setter", "hazard control", "speed control", "wall / stalle
 # `expect` = roles the critic treats as required, `speed` = whether speed control
 # is wanted. The same knob drives generation and criticism, so an HO team is not
 # built with (or dinged for lacking) a wall, and stall is not dinged for no Scarf.
+# `lean` (off/neutral/def) also selects each mon's set: an offensive spread+item for
+# HO, a defensive one for stall, so a stall build renders bulky sets, not the aggregate
+# most-used one.
 _ARCHETYPES = {
     # most offensive: fast breakers + setup sweepers behind hazard chip, no walls.
     "hyper offense": {"build": ["hazard setter", "speed control", "setup sweeper", "wallbreaker", "pivot"],
-                      "expect": ["hazard setter", "speed control"], "speed": True, "wall": False},
+                      "expect": ["hazard setter", "speed control"], "speed": True, "wall": False, "lean": "off"},
     # offense with a defensive backbone: breakers + speed control + a wall or two.
     "bulky offense": {"build": ["hazard setter", "hazard control", "speed control", "setup sweeper", "wallbreaker", "wall / staller"],
-                      "expect": ["hazard setter", "hazard control", "speed control"], "speed": True, "wall": True},
+                      "expect": ["hazard setter", "hazard control", "speed control"], "speed": True, "wall": True, "lean": "off"},
     # the all-rounder: full role coverage (hazards, removal, speed, a wall, a pivot).
     "balance": {"build": ["hazard setter", "hazard control", "speed control", "wall / staller", "pivot", "wallbreaker"],
-                "expect": ["hazard setter", "hazard control", "speed control", "wall / staller", "pivot"], "speed": True, "wall": True},
+                "expect": ["hazard setter", "hazard control", "speed control", "wall / staller", "pivot"], "speed": True, "wall": True, "lean": "neutral"},
     # fat balance: stacked walls + bulky pivots + hazards, but keeps one wallbreaker
     # as a wincon (more offense than stall, far more bulk than balance).
     "fat": {"build": ["wall / staller", "hazard setter", "hazard control", "pivot", "cleric", "wallbreaker"],
-            "expect": ["wall / staller", "hazard setter", "hazard control", "pivot"], "speed": False, "wall": True},
+            "expect": ["wall / staller", "hazard setter", "hazard control", "pivot"], "speed": False, "wall": True, "lean": "def"},
     # most defensive: walls, recovery, hazards, status; wins by outlasting, no Scarf.
     "stall": {"build": ["wall / staller", "hazard setter", "hazard control", "cleric", "status spreader"],
-              "expect": ["wall / staller", "hazard setter", "hazard control"], "speed": False, "wall": True},
+              "expect": ["wall / staller", "hazard setter", "hazard control"], "speed": False, "wall": True, "lean": "def"},
 }
+
+# item categories for archetype-appropriate set selection
+_OFF_ITEMS = {"choice band", "choice specs", "choice scarf", "life orb", "booster energy",
+              "expert belt", "punching glove", "loaded dice"}
+_DEF_ITEMS = {"leftovers", "heavy-duty boots", "rocky helmet", "eviolite", "assault vest",
+              "covert cloak", "black sludge"}
+_SETUP_MOVES = {"swords dance", "dragon dance", "nasty plot", "calm mind", "quiver dance",
+                "shell smash", "bulk up", "agility", "victory dance", "clangorous soul",
+                "no retreat", "belly drum"}
+
+
+def _pick_spread(spreads, lean):
+    """Highest-usage spread matching the archetype lean. Offense vs bulk is Atk+SpA vs
+    HP+Def+SpD; Speed is neutral (both archetypes invest it to outspeed) and kept as-is."""
+    def off_def(sp):
+        try:
+            e = [int(x) for x in sp.split(":")[1].split("/")]
+        except (ValueError, IndexError):
+            return 0, 0
+        return e[1] + e[3], e[0] + e[2] + e[4]          # (Atk+SpA offense; HP+Def+SpD bulk)
+    if not spreads:
+        return None
+    if lean == "off":
+        cands = [s for s, _ in spreads if off_def(s)[0] >= off_def(s)[1]]
+    elif lean == "def":
+        cands = [s for s, _ in spreads if off_def(s)[1] > off_def(s)[0]]
+    else:
+        cands = []
+    return cands[0] if cands else spreads[0][0]
+
+
+def _pick_item(items, lean):
+    pref = _OFF_ITEMS if lean == "off" else _DEF_ITEMS if lean == "def" else None
+    if pref:
+        for name, _ in items:
+            if name.lower() in pref:
+                return name
+    return items[0][0] if items else None
+
+
+def _pick_moves(entry, lean):
+    """Top-4 moves, biased so a defensive build keeps a recovery move and an offensive
+    build keeps a setup move when the mon has one."""
+    all_moves = [m for m, _ in entry.get("moves", [])]
+    top = all_moves[:4]
+    extra = None
+    if lean == "def":
+        extra = next((m for m in all_moves if m.lower() in _RECOVERY), None)
+    elif lean == "off":
+        extra = next((m for m in all_moves if m.lower() in _SETUP_MOVES), None)
+    if extra and extra not in top:
+        top = top[:3] + [extra]
+    return top[:4]
 
 
 def _archetype(name):
@@ -524,13 +580,13 @@ def _ou_usage(fmt="gen9ou"):
     return ou.usage(settings.crystal_battle_path, fmt)
 
 
-def _mon_set_lines(mon: str, entry: dict, tera: bool = False) -> str:
-    """A Showdown-paste set from the mon's most-used moves / item / ability / spread
-    (plus Tera type, for formats that allow Terastallization)."""
-    moves = [m for m, _ in entry.get("moves", [])[:4]]
-    item = entry["items"][0][0] if entry.get("items") else None
+def _mon_set_lines(mon: str, entry: dict, tera: bool = False, lean: str = "neutral") -> str:
+    """A Showdown-paste set from the mon's moves / item / ability / spread, biased to
+    the archetype lean (offensive vs defensive), plus Tera type where allowed."""
+    moves = _pick_moves(entry, lean)
+    item = _pick_item(entry.get("items", []), lean)
     abil = entry["abilities"][0][0] if entry.get("abilities") else None
-    spread = entry["spreads"][0][0] if entry.get("spreads") else None
+    spread = _pick_spread(entry.get("spreads", []), lean)
     lines = [f"{mon} @ {item}" if item else mon]
     if abil:
         lines.append(f"Ability: {abil}")
@@ -574,7 +630,7 @@ def _validate_team(paste: str, fmt: str = "gen9monotype", name: str = "Team") ->
     return True, clean, problems
 
 
-def _assemble_team(ms, usage, have, want, fmt, tera):
+def _assemble_team(ms, usage, have, want, fmt, tera, lean="neutral"):
     """Shared role-aware assembly + set-building + validate + critique-refine loop
     (format-agnostic: monotype or gen9ou). Returns (team, paste, validated, clean,
     problems)."""
@@ -603,7 +659,7 @@ def _assemble_team(ms, usage, have, want, fmt, tera):
     team = fill([m for m in ms if m.lower() in {h.lower() for h in have}], set())
     banned, paste = set(), ""
     for _ in range(4):
-        paste = "\n\n".join(_mon_set_lines(m, ms[m], tera) for m in team)
+        paste = "\n\n".join(_mon_set_lines(m, ms[m], tera, lean) for m in team)
         _, clean, problems = _validate_team(paste, fmt)
         if clean:
             break
@@ -625,7 +681,7 @@ def _assemble_team(ms, usage, have, want, fmt, tera):
         if not filler or not drop:
             break
         cand = [m for m in team if m != drop] + [filler]
-        cpaste = "\n\n".join(_mon_set_lines(m, ms[m], tera) for m in cand)
+        cpaste = "\n\n".join(_mon_set_lines(m, ms[m], tera, lean) for m in cand)
         _, cclean, _ = _validate_team(cpaste, fmt)
         if cclean:
             team, paste = cand, cpaste
@@ -655,7 +711,7 @@ def generate_team(type_name: str, have: list[str] | None = None,
         return []
     usage = dict(md.type_usage(cb, type_name.lower()))
     team, paste, validated, clean, problems = _assemble_team(
-        ms, usage, have or [], arch["build"], "gen9monotype", tera=False)
+        ms, usage, have or [], arch["build"], "gen9monotype", tera=False, lean=arch["lean"])
     Typ = type_name.capitalize()
     label = "" if archetype.lower() == "balance" else f" {archetype.lower()}"
     parts = [f"A Gen 9 Monotype{label} {Typ} team, built from usage and teammate stats:", "", paste, ""]
@@ -675,7 +731,7 @@ def generate_ou_team(have: list[str] | None = None, archetype: str = "balance") 
         return []
     usage_list = _ou_usage("gen9ou")
     team, paste, validated, clean, problems = _assemble_team(
-        ms, dict(usage_list), have or [], arch["build"], "gen9ou", tera=True)
+        ms, dict(usage_list), have or [], arch["build"], "gen9ou", tera=True, lean=arch["lean"])
     label = "" if archetype.lower() == "balance" else f" {archetype.lower()}"
     parts = [f"A Gen 9 OU{label} team, built from usage and teammate stats:", "", paste, ""]
     parts += _ou_analysis_lines(team, ms, usage_list, arch)
