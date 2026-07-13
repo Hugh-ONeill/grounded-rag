@@ -465,5 +465,13 @@
   expect_source: "tool#recommend_teammates"
   expect_keywords: ["gholdengo"]
 
+- question: "Build me a Steel monotype team."
+  expect_source: "tool#generate_team"
+  expect_keywords: ["gholdengo"]
+
+- question: "Make a Fairy monotype team."
+  expect_source: "tool#generate_team"
+  expect_keywords: ["flutter mane"]
+
 - question: "What was the prize pool for the 2026 Gen 9 Monotype Championship?"
   no_answer: true

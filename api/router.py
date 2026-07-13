@@ -44,6 +44,9 @@ _TYPE_TEAM = re.compile(
 _TEAMMATE = re.compile(
     r"\bteammates?\b|\bpartners?\b|pairs? (?:with|well|nicely|up)|pair well|goes? well"
     r"|round out|fill out|complement|what (?:else )?(?:to|should i|can i) (?:add|run|pair|bring)", re.I)
+# build-a-team intent: "build me a Steel team", "make a monotype Fairy team"
+_BUILD_TEAM = re.compile(
+    r"\b(?:build|make|generate|create|come up with|put together|suggest|give me)\b.{0,40}\bteams?\b", re.I)
 _DAMAGE = re.compile(
     r"\bohko\w*|\b\dhko\b|one[- ]shot|how much damage|damage (?:does|output|calculation|against|to|on)\b"
     r"|\bcalculate\b|\boutput\b|knock(?:s|ed|ing)?(?: \w+)? out|taken out|\bsingle hit\b|\bone hit\b"
@@ -323,6 +326,13 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
             p = tools.monotype_stat_query(types[0], stat, lowest=lowest)
             if p:
                 return p
+
+    # "build me a Steel monotype team" -> assemble + validate a full 6-mon team.
+    # Checked before the teammate recommender (a full-team ask is more specific).
+    if _BUILD_TEAM.search(question) and types:
+        p = tools.generate_team(types[0], have=mons)
+        if p:
+            return p
 
     # monotype teammate recommender: "good Steel teammates for Gholdengo" / "what
     # pairs with Heatran on a Steel team" -> ranked same-type partners tagged by role.

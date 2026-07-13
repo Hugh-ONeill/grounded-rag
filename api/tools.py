@@ -7,6 +7,10 @@ all work unchanged. Data comes straight from the PokeAPI CSVs (same checkout
 the corpus adapter reads).
 """
 import csv
+import os
+import shutil
+import subprocess
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 from config import settings
@@ -328,10 +332,7 @@ _RECOVERY = {"recover", "roost", "slack off", "soft-boiled", "morning sun", "moo
 _CHOICE_OFFENSE = {"choice band", "choice specs", "life orb"}
 
 
-def _team_roles(entry: dict) -> list[str]:
-    """Infer competitive roles from a mon's most-used moves and top items."""
-    moves = {m.lower() for m, _ in entry.get("moves", [])}
-    items = {i.lower() for i, _ in entry.get("items", [])[:3]}
+def _roles_from(moves: set, items: set) -> list[str]:
     roles = [role for role, kws in _ROLE_MOVES.items() if moves & kws]
     if moves & _RECOVERY:
         roles.append("wall / staller")
@@ -340,6 +341,20 @@ def _team_roles(entry: dict) -> list[str]:
     if items & _CHOICE_OFFENSE and "setup sweeper" not in roles:
         roles.append("wallbreaker")
     return roles
+
+
+def _team_roles(entry: dict) -> list[str]:
+    """The roles a mon CAN fill, across its whole observed movepool/items — the
+    recommender shows a mon's versatility."""
+    return _roles_from({m.lower() for m, _ in entry.get("moves", [])},
+                       {i.lower() for i, _ in entry.get("items", [])[:3]})
+
+
+def _set_roles(entry: dict) -> list[str]:
+    """The roles a mon actually fills in its generated set (top-4 moves + top item) —
+    the generator must describe coverage honestly, by the sets it builds."""
+    return _roles_from({m.lower() for m, _ in entry.get("moves", [])[:4]},
+                       {entry["items"][0][0].lower()} if entry.get("items") else set())
 
 
 def recommend_teammates(type_name: str, have: list[str] | None = None,
@@ -394,6 +409,119 @@ def recommend_teammates(type_name: str, have: list[str] | None = None,
             lines.append("Roles your current core lacks: " + ", ".join(missing)
                          + " — prioritize teammates that provide them.")
     return [_passage("tool#recommend_teammates", f"{Typ} monotype teammates", "\n".join(lines))] \
+        + _corpus_docs([f"gen9monotype_usage#{Typ}"])
+
+
+# Stage 2 team generator: assemble a legal team, gated by the Showdown validator.
+_NODE = shutil.which("node")
+_VALIDATE_JS = os.path.expanduser("~/team-tools/validate_teams.js")
+_STAT_ORDER = ["HP", "Atk", "Def", "SpA", "SpD", "Spe"]
+_KEY_ROLES = ["hazard setter", "hazard control", "speed control", "wall / staller", "pivot"]
+
+
+def _mon_set_lines(mon: str, entry: dict) -> str:
+    """A Showdown-paste set from the mon's most-used moves / item / ability / spread."""
+    moves = [m for m, _ in entry.get("moves", [])[:4]]
+    item = entry["items"][0][0] if entry.get("items") else None
+    abil = entry["abilities"][0][0] if entry.get("abilities") else None
+    spread = entry["spreads"][0][0] if entry.get("spreads") else None
+    lines = [f"{mon} @ {item}" if item else mon]
+    if abil:
+        lines.append(f"Ability: {abil}")
+    if spread and ":" in spread:
+        nat, evs = spread.split(":")
+        evs = [int(x) for x in evs.split("/")]
+        es = " / ".join(f"{v} {_STAT_ORDER[i]}" for i, v in enumerate(evs) if v)
+        if es:
+            lines.append(f"EVs: {es}")
+        lines.append(f"{nat} Nature")
+    lines += [f"- {mv}" for mv in moves]
+    return "\n".join(lines)
+
+
+def _validate_team(paste: str, type_name: str) -> tuple[bool, bool, list[str]]:
+    """Run the team through Showdown's TeamValidator for gen9monotype.
+    Returns (validated, clean, problems); validated=False when node/validator is
+    unavailable (the tool then degrades to unvalidated sets rather than blocking)."""
+    if not _NODE or not os.path.exists(_VALIDATE_JS):
+        return False, True, []
+    body = f"=== [gen9monotype] {type_name.capitalize()} ===\n\n{paste}\n"
+    path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write(body)
+            path = f.name
+        r = subprocess.run([_NODE, _VALIDATE_JS, path, "gen9monotype"],
+                           capture_output=True, text=True, timeout=60)
+    except Exception:
+        return False, True, []
+    finally:
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    clean = r.stdout.lstrip().startswith("OK ")
+    problems = [l.strip() for l in r.stdout.splitlines() if l.startswith("  ")]
+    return True, clean, problems
+
+
+def generate_team(type_name: str, have: list[str] | None = None) -> list[dict]:
+    """Build a full 6-mon Gen 9 Monotype team of one type: seed with any given core,
+    fill by role coverage + teammate co-occurrence + usage, render sets from the
+    moveset stats, and gate the result through the Showdown validator (dropping and
+    refilling any Pokemon it flags)."""
+    have = have or []
+    cb = settings.crystal_battle_path
+    ms = md.type_moveset(cb, type_name.lower())
+    if not ms:
+        return []
+    usage = dict(md.type_usage(cb, type_name.lower()))
+    pool = sorted(ms, key=lambda m: usage.get(m, 0), reverse=True)
+
+    def roles_of(t):
+        return set().union(*(set(_set_roles(ms[m])) for m in t)) if t else set()
+
+    def coocc(c, t):
+        if not t:
+            return 0.0
+        return sum({n.lower(): p for n, p in ms[m].get("teammates", [])}.get(c.lower(), 0.0)
+                   for m in t) / len(t)
+
+    def fill(team, banned):
+        while len(team) < 6:
+            miss = set(_KEY_ROLES) - roles_of(team)
+            best = max((c for c in pool if c not in team and c not in banned),
+                       key=lambda c: len(set(_set_roles(ms[c])) & miss) * 1000
+                       + coocc(c, team) + usage.get(c, 0) * 0.5, default=None)
+            if not best:
+                break
+            team.append(best)
+        return team
+
+    team = fill([m for m in ms if m.lower() in {h.lower() for h in have}], set())
+    banned, validated, clean, problems, paste = set(), False, True, [], ""
+    for _ in range(4):
+        paste = "\n\n".join(_mon_set_lines(m, ms[m]) for m in team)
+        validated, clean, problems = _validate_team(paste, type_name)
+        if clean:
+            break
+        flagged = {m for m in team for p in problems if m.lower() in p.lower()}
+        if not flagged:
+            break                       # non-mon-specific problem: stop and report it
+        banned |= flagged
+        team = fill([m for m in team if m not in flagged], banned)
+
+    Typ = type_name.capitalize()
+    parts = [f"A Gen 9 Monotype {Typ} team, built from usage and teammate stats:", "", paste, "",
+             "Roles covered: " + (", ".join(sorted(roles_of(team))) or "n/a") + "."]
+    if validated and clean:
+        parts.append("Legality: passes the gen9monotype team validator.")
+    elif validated:
+        parts.append("Note: the validator flagged " + "; ".join(problems[:3]) + ".")
+    else:
+        parts.append("Note: sets are from usage stats (team validator was unavailable).")
+    return [_passage("tool#generate_team", f"{Typ} monotype team", "\n".join(parts))] \
         + _corpus_docs([f"gen9monotype_usage#{Typ}"])
 
 
