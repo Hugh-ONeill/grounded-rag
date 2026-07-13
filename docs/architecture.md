@@ -15,8 +15,9 @@
    grounding prompt; it answers with `[n]` citations, streamed token-by-token over SSE.
    History never enters this prompt: answers stay grounded in the fresh passages only.
 6. **Evaluate** (`eval/run_eval.py`) — gold questions measure retrieval hit-rate, answer
-   faithfulness, refusal precision, follow-up (condense → retrieve) hit-rate, and
-   ungrounded entity mentions; `eval/band_report.py` reports gate-signal bands and margins.
+   faithfulness, refusal precision, follow-up (condense → retrieve) hit-rate, paraphrase
+   hit-rate (frozen rewordings, see `eval/gen_paraphrases.py`), and ungrounded entity
+   mentions; `eval/band_report.py` reports gate-signal bands and margins.
 
 ## Why these choices
 

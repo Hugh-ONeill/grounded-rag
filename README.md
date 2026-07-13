@@ -176,6 +176,22 @@ count). The boost deliberately does not feed the refusal gate: a first attempt t
 "Point Card" open the gate for a question about boiling points, and refusal precision fell to
 33% until ordering and gating were separated.
 
+**Phrasing robustness is measured, and the first measurement scored 78%.** The gold set only
+ever tested one phrasing per fact, and past retrieval bugs had all hidden behind exactly that:
+each was found by ad-hoc poking, not by the eval. So every gold question now has frozen Gemma
+rewordings (entity names guarded verbatim) scored as their own row, and the first sweep's 51
+misses were all real. The router knew "OHKO" but not "one-shot", "OHKO'd", or "knocked out in
+one hit"; it knew "faster" but not "compare the speed"; "fastest" but not "quickest";
+"effective against" but not "susceptible to". The fix widens the verb vocabularies, which is
+safe here because every router branch still requires positively identified entities before it
+fires, and moves the calc branches ahead of matchup so both can be broad without hijacking
+each other. The sweep also caught a retrieval class the unigram IDF cannot serve: every word
+of "Which Pokemon is known as the Sleeping Pokemon?" is too common to survive the document
+frequency ceiling, but the phrase is unique, so the keyword leg now falls back to
+adjacent-bigram phrase queries (with accent variants, because the corpus spells "Pokémon" and
+questions type "pokemon"). Three sweeps later the row reads 100%, and each fix is pinned by
+the paraphrase that found it.
+
 **Postgres full-text search has no IDF, so term selection supplies it.** First contact with
 the keyword leg was a flood: for "What is Garganacl's most used move?", OR-querying every
 question word made 900 move documents title-match the word "move", and ts_rank scores a title
@@ -194,13 +210,14 @@ and computed answers:
 type matchups with conditional immunities, speed checks, typed stat queries, battle-state-aware
 engine damage calculations, and tiered OHKO and survival escalation searches; 6 conversational
 follow-ups whose referent lives in a prior turn, including one that must route into a tool
-after condensation; and 4 deliberately unanswerable, one of them a follow-up), the current
-build scores:
+after condensation; 4 deliberately unanswerable, one of them a follow-up; plus 228 frozen
+paraphrases of the whole set), the current build scores:
 
 | Metric | Score |
 |--------|-------|
 | Retrieval hit-rate@k | 100% (74/74) |
 | Follow-up hit-rate (condense → retrieve) | 100% (6/6) |
+| Paraphrase hit-rate | 100% (228/228) |
 | Answer faithfulness | 100% (70/70) |
 | Refusal precision (no-answer) | 100% (4/4: 3 gate, 1 generator) |
 | Ungrounded entity mentions | 0 (over 70 generated answers) |
@@ -212,7 +229,11 @@ conversational path (condense the follow-up against its transcript, then route) 
 as its own row so the single-turn numbers stay comparable. Ungrounded entity mentions counts
 known Pokemon and move names a generated answer uses that appear in no retrieved passage:
 knowledge leakage that keyword checks cannot see, because an answer can contain every
-expected term and still be decorated with world knowledge. Retrieval and refusal on
+expected term and still be decorated with world knowledge. Paraphrase hit-rate scores frozen
+Gemma rewordings of each gold question ([eval/paraphrases.yaml](eval/paraphrases.yaml),
+entity names guarded verbatim) against the same expected source, because retrieval bugs have
+repeatedly hidden behind the one phrasing the gold set happened to use; paraphrases of
+unanswerable questions must still be refused. Retrieval and refusal on
 single-turn questions are deterministic; generation and condensation are temperature-sampled,
 so faithfulness moves between 95% and 100% across runs.
 Gold questions live in [eval/questions.yaml](eval/questions.yaml). The harness exits nonzero
@@ -302,3 +323,4 @@ python -m venv .venv && .venv/bin/pip install -e ./api
 - [x] Ungrounded-entity eval metric (knowledge leakage the keyword proxy can't see)
 - [x] Band-drift report: gate-signal bands and threshold margins as one command
 - [x] Pre-push eval hook (harness exits nonzero on any miss)
+- [x] Paraphrase-robustness gold: frozen rewordings of every gold question, scored as their own row
