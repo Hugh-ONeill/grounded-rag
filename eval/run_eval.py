@@ -119,9 +119,12 @@ async def main():
             if all(k.lower() in raw_ans.lower() for k in kws):
                 faith += 1
             # knowledge-leakage check: entities the answer names must exist in some
-            # retrieved passage. Lowercase occurrences are skipped: a move named
-            # "rest" or "protect" matching ordinary prose is not an entity mention.
-            ctx = _squash(" ".join(p["content"] for p in passages))
+            # retrieved passage OR in the question itself (echoing the question's own
+            # terms is not decoration: "after a Swords Dance" gets stripped to +2
+            # before the calc tool runs, so the passages never name the move).
+            # Lowercase occurrences are skipped: a move named "rest" or "protect"
+            # matching ordinary prose is not an entity mention.
+            ctx = _squash(" ".join(p["content"] for p in passages) + " " + q)
             ents = find_entity_names(raw_ans)
             for name in ents["pokemon"] + ents["moves"]:
                 if _squash(name) in ctx:

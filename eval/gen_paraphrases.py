@@ -73,12 +73,19 @@ async def _paraphrase(client: httpx.AsyncClient, question: str) -> list[str]:
 async def main():
     qdir = Path(__file__).parent
     questions = yaml.safe_load((qdir / "questions.yaml").read_text())
+    pfile = qdir / "paraphrases.yaml"
+    # additive by default: questions already covered are skipped and existing file
+    # text (including hand edits and comments) is preserved — the frozen set only
+    # grows when new gold questions appear
+    covered = set()
+    if pfile.exists():
+        covered = {e["question"] for e in (yaml.safe_load(pfile.read_text()) or [])}
     out = []
     dropped = 0
 
     async with httpx.AsyncClient(base_url=settings.ollama_host, timeout=120) as client:
         for item in questions:
-            if item.get("history"):
+            if item.get("history") or item["question"] in covered:
                 continue
             q = item["question"]
             req = [_squash(t) for t in _required_terms(q)]
@@ -102,8 +109,15 @@ async def main():
         "# expect_source (or refusal, for no-answer originals) as the 'Paraphrase\n"
         "# hit-rate' eval row. Edit freely: drop bad rewordings, add real-user phrasings.\n"
     )
-    (qdir / "paraphrases.yaml").write_text(
-        header + yaml.safe_dump(out, allow_unicode=True, sort_keys=False, width=100))
+    if not out:
+        print("\nNothing to do: every gold question is already covered.")
+        return
+    new_yaml = yaml.safe_dump(out, allow_unicode=True, sort_keys=False, width=100)
+    if covered:
+        # append below the existing text: hand edits and comments must survive
+        pfile.write_text(pfile.read_text().rstrip() + "\n" + new_yaml)
+    else:
+        pfile.write_text(header + new_yaml)
     total = sum(len(e["paraphrases"]) for e in out)
     print(f"\nWrote {total} paraphrases for {len(out)} questions "
           f"({dropped} dropped by the entity guard) -> eval/paraphrases.yaml")

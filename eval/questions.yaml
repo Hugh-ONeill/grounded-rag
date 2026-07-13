@@ -406,3 +406,16 @@
     - role: assistant
       content: "In Gen 9 OU, Kingambit most commonly holds Leftovers [1]."
   no_answer: true
+
+# ---- Speed tiers ----
+- question: "What outspeeds Garchomp?"
+  expect_source: "tool#speed_tiers"
+  expect_keywords: ["deoxys"]
+
+- question: "Who is faster than Kingambit?"
+  expect_source: "tool#speed_tiers"
+  expect_keywords: []
+
+- question: "What outspeeds Dragapult in Gen 9 OU?"
+  expect_source: "tool#speed_tiers"
+  expect_keywords: ["deoxys", "scarf"]
