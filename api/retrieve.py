@@ -7,6 +7,7 @@ reads (question, passage) together, which both improves top-k precision and
 gives the refusal gate a signal that stays comparable as the corpus grows.
 """
 import asyncio
+import re
 from db import connect
 from embeddings import embed_one
 from config import settings
@@ -53,6 +54,32 @@ def _rare_terms(conn, question: str) -> list[str]:
     return rare[:KW_TERMS]
 
 
+# Accent variants for phrase search: corpus text spells "Pokémon" accented while
+# questions type "pokemon", and the tsvector is not unaccented, so the two are
+# different lexemes. Unaccent-at-ingest is the durable fix if this map grows.
+_ACCENT_VARIANTS = {"pokemon": "pokémon", "poke": "poké"}
+
+
+def _phrase_queries(conn, question: str) -> list[str]:
+    """Adjacent-bigram phrase queries: the fallback IDF for questions made entirely
+    of common words. No unigram in "the Sleeping Pokemon" survives the df ceiling
+    (sleep 2376, pokemon 2179 vs ceiling 1130), but the PHRASE 'sleep <-> pokemon'
+    is highly selective. Returns tsquery strings (already-stemmed lexeme form)."""
+    words = re.findall(r"[a-z0-9'’é-]+", question.lower())
+    df = _lexeme_df(conn)
+    out = []
+    for a, b in zip(words, words[1:]):
+        for va, vb in {(a, b), (_ACCENT_VARIANTS.get(a, a), _ACCENT_VARIANTS.get(b, b))}:
+            with conn.cursor() as cur:
+                cur.execute("SELECT phraseto_tsquery('english', %s)::text", (f"{va} {vb}",))
+                tsq = cur.fetchone()[0]
+            # keep only true two-lexeme phrases whose lexemes both exist in the corpus
+            lexs = re.findall(r"'([^']+)'", tsq)
+            if "<->" in tsq and len(lexs) == 2 and all(l in df for l in lexs) and tsq not in out:
+                out.append(tsq)
+    return out
+
+
 async def retrieve(question: str, k: int | None = None, corpus: str | None = None) -> list[dict]:
     """Vector leg: top-k chunks by cosine similarity."""
     k = k or settings.top_k
@@ -83,18 +110,26 @@ def _keyword_leg(question: str, k: int, corpus: str | None) -> list[dict]:
     flooding is gone and no length normalization is needed."""
     with connect() as conn:
         terms = _rare_terms(conn, question)
-        if not terms:
-            return []
-        tsq = " | ".join(terms)
+        if terms:
+            tsq = " | ".join(terms)
+            tsq_expr = "to_tsquery('english', %s)"
+        else:
+            # every unigram is too common to search: fall back to adjacent-word
+            # phrases, whose adjacency supplies the selectivity the words lack
+            phrases = _phrase_queries(conn, question)
+            if not phrases:
+                return []
+            tsq = " | ".join(f"({p})" for p in phrases)
+            tsq_expr = "%s::tsquery"
         where = "AND corpus = %s" if corpus else ""
         params = [tsq, tsq] + ([corpus] if corpus else []) + [k]
         with conn.cursor() as cur:
             cur.execute(
                 f"""
                 SELECT id, corpus, source, title, content,
-                       ts_rank({_TSV}, to_tsquery('english', %s)) AS kw_rank
+                       ts_rank({_TSV}, {tsq_expr}) AS kw_rank
                 FROM chunks
-                WHERE {_TSV} @@ to_tsquery('english', %s) {where}
+                WHERE {_TSV} @@ {tsq_expr} {where}
                 ORDER BY kw_rank DESC
                 LIMIT %s
                 """,
