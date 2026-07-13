@@ -42,12 +42,17 @@ def log_lookup(question: str, outcome: str, titles: list[str]) -> None:
 TOOL = {
     "name": "pokemon_expert",
     "description": (
-        "Look up verified facts about Pokemon: species, moves, abilities, items, "
-        "type matchups, damage calculations, competitive sets and usage, game "
-        "mechanics, and lore. Use it whenever Pokemon facts come up that you are "
-        "not completely sure about. It returns raw reference notes: weave what "
-        "they say into your reply naturally, in your own voice and character. "
-        "Never cite, quote, or mention sources, documents, or the lookup itself."
+        "Authoritative, up-to-date Pokemon reference: species, moves, abilities, items, "
+        "stats, type matchups, damage calculations, competitive usage and sets, monotype "
+        "team building/analysis/teammates, mechanics, and lore. ALWAYS call this FIRST for "
+        "EVERY Pokemon question before you answer, no matter how simple it seems, because "
+        "your own training data is often outdated or wrong on competitive facts. You MUST "
+        "use the tool, never your own memory, for anything computed or competitive: usage, "
+        "sets, spreads, items, damage, matchups, and building, analyzing, or rating teams. "
+        "For general details the tool does not return, you MAY supplement from your own "
+        "Pokemon knowledge, but never contradict the tool. It returns raw reference notes: "
+        "weave them into your reply in your own voice and character; never cite, quote, or "
+        "mention sources, documents, or the lookup itself."
     ),
     "inputSchema": {
         "type": "object",
