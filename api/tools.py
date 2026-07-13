@@ -630,10 +630,9 @@ def _validate_team(paste: str, fmt: str = "gen9monotype", name: str = "Team") ->
     return True, clean, problems
 
 
-def _assemble_team(ms, usage, have, want, fmt, tera, lean="neutral"):
-    """Shared role-aware assembly + set-building + validate + critique-refine loop
-    (format-agnostic: monotype or gen9ou). Returns (team, paste, validated, clean,
-    problems)."""
+def _assemble_once(ms, usage, have, want, fmt, tera, lean, initial_banned):
+    """Role-aware assembly + set-building + validate + critique-refine loop, starting
+    from a set of banned Pokemon. Returns (team, paste, validated, clean, problems)."""
     pool = sorted(ms, key=lambda m: usage.get(m, 0), reverse=True)
 
     def roles_of(t):
@@ -656,8 +655,9 @@ def _assemble_team(ms, usage, have, want, fmt, tera, lean="neutral"):
             team.append(best)
         return team
 
-    team = fill([m for m in ms if m.lower() in {h.lower() for h in have}], set())
-    banned, paste = set(), ""
+    banned = set(initial_banned)
+    team = fill([m for m in ms if m.lower() in {h.lower() for h in have}], banned)
+    paste = ""
     for _ in range(4):
         paste = "\n\n".join(_mon_set_lines(m, ms[m], tera, lean) for m in team)
         _, clean, problems = _validate_team(paste, fmt)
@@ -692,6 +692,23 @@ def _assemble_team(ms, usage, have, want, fmt, tera, lean="neutral"):
     return team, paste, validated, clean, problems
 
 
+def _assemble_team(ms, usage, have, want, fmt, tera, lean="neutral", variant=0):
+    """Shared assembler. variant=0 is the base team; variant K bans the K-th most
+    marginal (lowest-usage, non-seeded) member of the base and re-assembles, yielding
+    a distinct legal team — deterministic, so it stays eval-safe."""
+    team, paste, v, c, p = _assemble_once(ms, usage, have, want, fmt, tera, lean, set())
+    if variant <= 0:
+        return team, paste, v, c, p
+    have_lc = {h.lower() for h in have}
+    swappable = sorted((m for m in team if m.lower() not in have_lc),
+                       key=lambda m: usage.get(m, 0))
+    if variant <= len(swappable):
+        alt = _assemble_once(ms, usage, have, want, fmt, tera, lean, {swappable[variant - 1]})
+        if set(alt[0]) != set(team):
+            return alt
+    return team, paste, v, c, p
+
+
 def _legality_line(validated, clean, problems, fmt):
     if validated and clean:
         return f"Legality: passes the {fmt} team validator."
@@ -701,9 +718,9 @@ def _legality_line(validated, clean, problems, fmt):
 
 
 def generate_team(type_name: str, have: list[str] | None = None,
-                  archetype: str = "balance") -> list[dict]:
+                  archetype: str = "balance", variant: int = 0) -> list[dict]:
     """Build a full 6-mon Gen 9 Monotype team of one type and archetype, gated by the
-    Showdown validator."""
+    Showdown validator. variant>0 returns a distinct alternate."""
     arch = _archetype(archetype)
     cb = settings.crystal_battle_path
     ms = md.type_moveset(cb, type_name.lower())
@@ -711,29 +728,32 @@ def generate_team(type_name: str, have: list[str] | None = None,
         return []
     usage = dict(md.type_usage(cb, type_name.lower()))
     team, paste, validated, clean, problems = _assemble_team(
-        ms, usage, have or [], arch["build"], "gen9monotype", tera=False, lean=arch["lean"])
+        ms, usage, have or [], arch["build"], "gen9monotype", tera=False, lean=arch["lean"], variant=variant)
     Typ = type_name.capitalize()
     label = "" if archetype.lower() == "balance" else f" {archetype.lower()}"
-    parts = [f"A Gen 9 Monotype{label} {Typ} team, built from usage and teammate stats:", "", paste, ""]
+    art = "An alternative" if variant > 0 else "A"
+    parts = [f"{art} Gen 9 Monotype{label} {Typ} team, built from usage and teammate stats:", "", paste, ""]
     parts += _analysis_lines(type_name, team, ms, arch)
     parts.append(_legality_line(validated, clean, problems, "gen9monotype"))
     return [_passage("tool#generate_team", f"{Typ} monotype team", "\n".join(parts))] \
         + _corpus_docs([f"gen9monotype_usage#{Typ}"])
 
 
-def generate_ou_team(have: list[str] | None = None, archetype: str = "balance") -> list[dict]:
+def generate_ou_team(have: list[str] | None = None, archetype: str = "balance",
+                     variant: int = 0) -> list[dict]:
     """Build a full 6-mon Gen 9 OU team of an archetype from usage + teammate stats
-    (Tera included), gated by the Showdown validator. Stage A output is the team plus a
-    role-coverage note; the full OU critic (type coverage + threats) is analyze_ou_team."""
+    (Tera included), gated by the Showdown validator, with the OU critic appended.
+    variant>0 returns a distinct alternate."""
     arch = _archetype(archetype)
     ms = _ou_movesets("gen9ou")
     if not ms:
         return []
     usage_list = _ou_usage("gen9ou")
     team, paste, validated, clean, problems = _assemble_team(
-        ms, dict(usage_list), have or [], arch["build"], "gen9ou", tera=True, lean=arch["lean"])
+        ms, dict(usage_list), have or [], arch["build"], "gen9ou", tera=True, lean=arch["lean"], variant=variant)
     label = "" if archetype.lower() == "balance" else f" {archetype.lower()}"
-    parts = [f"A Gen 9 OU{label} team, built from usage and teammate stats:", "", paste, ""]
+    art = "An alternative" if variant > 0 else "A"
+    parts = [f"{art} Gen 9 OU{label} team, built from usage and teammate stats:", "", paste, ""]
     parts += _ou_analysis_lines(team, ms, usage_list, arch)
     parts.append(_legality_line(validated, clean, problems, "gen9ou"))
     return [_passage("tool#generate_team", "Gen 9 OU team", "\n".join(parts))] \

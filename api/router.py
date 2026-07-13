@@ -67,6 +67,18 @@ def _archetype_of(question: str) -> str:
     if re.search(r"\boffensive\b|\boffen[sc]e\b|\baggressive\b", q):
         return "hyper offense"
     return "balance"
+
+
+def _variant_of(question: str) -> int:
+    """Which team variant to return: 0 (base) unless the ask is for another/second/third."""
+    q = question.lower()
+    if re.search(r"\b(third|3rd)\b", q):
+        return 2
+    if re.search(r"\b(second|2nd)\b", q):
+        return 1
+    if re.search(r"\banother\b|\bdifferent\b|\balternat(?:e|ive)\b|\bother\b|\bvariant\b|\bone more\b", q):
+        return 1
+    return 0
 _DAMAGE = re.compile(
     r"\bohko\w*|\b\dhko\b|one[- ]shot|how much damage|damage (?:does|output|calculation|against|to|on)\b"
     r"|\bcalculate\b|\boutput\b|knock(?:s|ed|ing)?(?: \w+)? out|taken out|\bsingle hit\b|\bone hit\b"
@@ -362,9 +374,10 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
     # "build me a team": monotype when the question signals a single type, else default
     # to gen9OU (the format most people mean). Checked before the teammate recommender.
     if _BUILD_TEAM.search(question):
-        p = (tools.generate_team(types[0], have=team_mons, archetype=arch)
+        var = _variant_of(question)
+        p = (tools.generate_team(types[0], have=team_mons, archetype=arch, variant=var)
              if mono_intent and types
-             else tools.generate_ou_team(have=team_mons, archetype=arch))
+             else tools.generate_ou_team(have=team_mons, archetype=arch, variant=var))
         if p:
             return p
 
