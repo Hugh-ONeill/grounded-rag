@@ -47,6 +47,26 @@ _TEAMMATE = re.compile(
 # build-a-team intent: "build me a Steel team", "make a monotype Fairy team"
 _BUILD_TEAM = re.compile(
     r"\b(?:build|make|generate|create|come up with|put together|suggest|give me)\b.{0,40}\bteams?\b", re.I)
+# critique-an-existing-team intent (needs the team's mons named)
+_ANALYZE = re.compile(
+    r"\b(?:analy[sz]e|analysis|critique|review|rate|assess|evaluate|feedback on|"
+    r"how good is|wrong with|weakness(?:es)? (?:of|in)|problems? with)\b", re.I)
+
+
+def _archetype_of(question: str) -> str:
+    """Detect the requested team archetype, defaulting to balance."""
+    q = question.lower()
+    if re.search(r"hyper[- ]?offen[sc]e|\bho\b", q):
+        return "hyper offense"
+    if re.search(r"bulky[- ]?offen[sc]e", q):
+        return "bulky offense"
+    if "stall" in q:
+        return "stall"
+    if re.search(r"\bfat\b", q):
+        return "fat"
+    if re.search(r"\boffensive\b|\boffen[sc]e\b|\baggressive\b", q):
+        return "hyper offense"
+    return "balance"
 _DAMAGE = re.compile(
     r"\bohko\w*|\b\dhko\b|one[- ]shot|how much damage|damage (?:does|output|calculation|against|to|on)\b"
     r"|\bcalculate\b|\boutput\b|knock(?:s|ed|ing)?(?: \w+)? out|taken out|\bsingle hit\b|\bone hit\b"
@@ -232,6 +252,9 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
     # monotype is opt-in: only surface its docs/tools when the question names
     # monotype or a single-type team, else default hard to OU (see retrieve_hybrid).
     mono_intent = bool(_MONOTYPE.search(question) or _TYPE_TEAM.search(question))
+    # team tools need every named member (the calc tools cap _find_mons at 3)
+    team_mons = _find_names(question, tools.known_pokemon(), limit=12)
+    arch = _archetype_of(question)
 
     # "who is faster, X or Y" / "does X outspeed Y"
     if _SPEED_VS.search(question) and len(mons) == 2:
@@ -327,10 +350,19 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
             if p:
                 return p
 
+    # critique an existing monotype team: "analyze my Steel team: Heatran, Gholdengo..."
+    # Needs the members named; infers the shared type from them when not stated.
+    if _ANALYZE.search(question) and len(team_mons) >= 2:
+        typ = types[0] if types else tools.team_type(team_mons)
+        if typ:
+            p = tools.analyze_team(typ, team_mons, archetype=arch)
+            if p:
+                return p
+
     # "build me a Steel monotype team" -> assemble + validate a full 6-mon team.
     # Checked before the teammate recommender (a full-team ask is more specific).
     if _BUILD_TEAM.search(question) and types:
-        p = tools.generate_team(types[0], have=mons)
+        p = tools.generate_team(types[0], have=team_mons, archetype=arch)
         if p:
             return p
 
@@ -339,7 +371,7 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
     # Requires a type (a same-type team only exists in monotype), so OU teammate
     # questions fall through to retrieval.
     if _TEAMMATE.search(question) and types:
-        p = tools.recommend_teammates(types[0], have=mons)
+        p = tools.recommend_teammates(types[0], have=team_mons)
         if p:
             return p
 

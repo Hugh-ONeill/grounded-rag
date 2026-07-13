@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from collections import Counter
 from functools import lru_cache
 from pathlib import Path
 from config import settings
@@ -418,6 +419,33 @@ _VALIDATE_JS = os.path.expanduser("~/team-tools/validate_teams.js")
 _STAT_ORDER = ["HP", "Atk", "Def", "SpA", "SpD", "Spe"]
 _KEY_ROLES = ["hazard setter", "hazard control", "speed control", "wall / staller", "pivot"]
 
+# Archetype profiles: `build` = roles the generator fills for (its comp target),
+# `expect` = roles the critic treats as required, `speed` = whether speed control
+# is wanted. The same knob drives generation and criticism, so an HO team is not
+# built with (or dinged for lacking) a wall, and stall is not dinged for no Scarf.
+_ARCHETYPES = {
+    # most offensive: fast breakers + setup sweepers behind hazard chip, no walls.
+    "hyper offense": {"build": ["hazard setter", "speed control", "setup sweeper", "wallbreaker", "pivot"],
+                      "expect": ["hazard setter", "speed control"], "speed": True, "wall": False},
+    # offense with a defensive backbone: breakers + speed control + a wall or two.
+    "bulky offense": {"build": ["hazard setter", "hazard control", "speed control", "setup sweeper", "wallbreaker", "wall / staller"],
+                      "expect": ["hazard setter", "hazard control", "speed control"], "speed": True, "wall": True},
+    # the all-rounder: full role coverage (hazards, removal, speed, a wall, a pivot).
+    "balance": {"build": ["hazard setter", "hazard control", "speed control", "wall / staller", "pivot", "wallbreaker"],
+                "expect": ["hazard setter", "hazard control", "speed control", "wall / staller", "pivot"], "speed": True, "wall": True},
+    # fat balance: stacked walls + bulky pivots + hazards, but keeps one wallbreaker
+    # as a wincon (more offense than stall, far more bulk than balance).
+    "fat": {"build": ["wall / staller", "hazard setter", "hazard control", "pivot", "cleric", "wallbreaker"],
+            "expect": ["wall / staller", "hazard setter", "hazard control", "pivot"], "speed": False, "wall": True},
+    # most defensive: walls, recovery, hazards, status; wins by outlasting, no Scarf.
+    "stall": {"build": ["wall / staller", "hazard setter", "hazard control", "cleric", "status spreader"],
+              "expect": ["wall / staller", "hazard setter", "hazard control"], "speed": False, "wall": True},
+}
+
+
+def _archetype(name):
+    return _ARCHETYPES.get((name or "balance").lower(), _ARCHETYPES["balance"])
+
 
 def _mon_set_lines(mon: str, entry: dict) -> str:
     """A Showdown-paste set from the mon's most-used moves / item / ability / spread."""
@@ -466,12 +494,15 @@ def _validate_team(paste: str, type_name: str) -> tuple[bool, bool, list[str]]:
     return True, clean, problems
 
 
-def generate_team(type_name: str, have: list[str] | None = None) -> list[dict]:
-    """Build a full 6-mon Gen 9 Monotype team of one type: seed with any given core,
-    fill by role coverage + teammate co-occurrence + usage, render sets from the
-    moveset stats, and gate the result through the Showdown validator (dropping and
-    refilling any Pokemon it flags)."""
+def generate_team(type_name: str, have: list[str] | None = None,
+                  archetype: str = "balance") -> list[dict]:
+    """Build a full 6-mon Gen 9 Monotype team of one type and archetype: seed with any
+    given core, fill toward the archetype's role profile + teammate co-occurrence +
+    usage, render sets from the moveset stats, and gate the result through the Showdown
+    validator (dropping and refilling any Pokemon it flags)."""
     have = have or []
+    arch = _archetype(archetype)
+    want = arch["build"]
     cb = settings.crystal_battle_path
     ms = md.type_moveset(cb, type_name.lower())
     if not ms:
@@ -490,7 +521,7 @@ def generate_team(type_name: str, have: list[str] | None = None) -> list[dict]:
 
     def fill(team, banned):
         while len(team) < 6:
-            miss = set(_KEY_ROLES) - roles_of(team)
+            miss = set(want) - roles_of(team)
             best = max((c for c in pool if c not in team and c not in banned),
                        key=lambda c: len(set(_set_roles(ms[c])) & miss) * 1000
                        + coocc(c, team) + usage.get(c, 0) * 0.5, default=None)
@@ -512,9 +543,31 @@ def generate_team(type_name: str, have: list[str] | None = None) -> list[dict]:
         banned |= flagged
         team = fill([m for m in team if m not in flagged], banned)
 
+    # critique-driven refinement (the loop): if a key role is still missing AND the
+    # type has a mon that supplies it, swap out a redundant member and re-validate;
+    # stop when nothing is missing or the gap has no meta answer.
+    for _ in range(2):
+        missing = [r for r in want if r not in roles_of(team)]
+        if not missing:
+            break
+        filler = next((c for c in pool if c not in team and c not in banned
+                       and missing[0] in _set_roles(ms[c])), None)
+        drop = _least_valuable(team, ms, usage)
+        if not filler or not drop:
+            break
+        cand = [m for m in team if m != drop] + [filler]
+        cpaste = "\n\n".join(_mon_set_lines(m, ms[m]) for m in cand)
+        _, cclean, _ = _validate_team(cpaste, type_name)
+        if cclean:
+            team, paste = cand, cpaste
+        else:
+            banned.add(filler)
+
+    validated, clean, problems = _validate_team(paste, type_name)
     Typ = type_name.capitalize()
-    parts = [f"A Gen 9 Monotype {Typ} team, built from usage and teammate stats:", "", paste, "",
-             "Roles covered: " + (", ".join(sorted(roles_of(team))) or "n/a") + "."]
+    label = "" if archetype.lower() == "balance" else f" {archetype.lower()}"
+    parts = [f"A Gen 9 Monotype{label} {Typ} team, built from usage and teammate stats:", "", paste, ""]
+    parts += _analysis_lines(type_name, team, ms, arch)
     if validated and clean:
         parts.append("Legality: passes the gen9monotype team validator.")
     elif validated:
@@ -523,6 +576,72 @@ def generate_team(type_name: str, have: list[str] | None = None) -> list[dict]:
         parts.append("Note: sets are from usage stats (team validator was unavailable).")
     return [_passage("tool#generate_team", f"{Typ} monotype team", "\n".join(parts))] \
         + _corpus_docs([f"gen9monotype_usage#{Typ}"])
+
+
+def _least_valuable(team, ms, usage):
+    """The lowest-usage member whose key roles are all also covered by a teammate
+    (safe to swap out without losing coverage); None if no member is redundant."""
+    kr = {m: set(_set_roles(ms[m])) & set(_KEY_ROLES) for m in team if m in ms}
+    redundant = [m for m in kr if len(kr) > 1
+                 and kr[m] <= set().union(*(r for k, r in kr.items() if k != m))]
+    return min(redundant, key=lambda m: usage.get(m, 0)) if redundant else None
+
+
+def _team_analysis(type_name, team, ms, arch):
+    role_by_mon = {m: set(_set_roles(ms[m])) for m in team if m in ms}
+    covered = set().union(*role_by_mon.values()) if role_by_mon else set()
+    missing = [r for r in arch["expect"] if r not in covered]
+    rc = Counter(r for rs in role_by_mon.values() for r in rs)
+    redundant = [r for r, c in rc.items() if c >= 3 and r in _KEY_ROLES]
+    mc = md.matchup_chart(settings.crystal_battle_path).get(type_name.lower(), {})
+    weak = sorted(((o, w) for o, w in mc.items() if o != type_name.lower() and w <= 45),
+                  key=lambda x: x[1])[:5]
+    return {"covered": covered, "missing": missing, "redundant": redundant, "weak": weak}
+
+
+def _analysis_lines(type_name, team, ms, arch):
+    a = _team_analysis(type_name, team, ms, arch)
+    lines = ["Roles covered: " + (", ".join(sorted(a["covered"])) or "none") + "."]
+    if a["missing"]:
+        lines.append("Missing roles for this archetype: " + ", ".join(a["missing"]) + ".")
+    if a["redundant"]:
+        lines.append("Redundant (on 3+ members): " + ", ".join(a["redundant"]) + ".")
+    if arch["speed"] and "speed control" not in a["covered"]:
+        lines.append("No dedicated speed control (Choice Scarf / Tailwind) — watch for faster teams.")
+    if a["weak"]:
+        lines.append("Weakest against these monotypes: "
+                     + ", ".join(f"{o.capitalize()} ({w:.0f}%)" for o, w in a["weak"]) + ".")
+    return lines
+
+
+def team_type(mons: list[str]) -> str | None:
+    """The single type shared by every named mon (the monotype), or None."""
+    d = _data()
+    typesets = [set(d["mons"][m.lower()]["types"]) for m in mons if m.lower() in d["mons"]]
+    if not typesets:
+        return None
+    common = set.intersection(*typesets)
+    return next(iter(common)).lower() if common else None
+
+
+def analyze_team(type_name: str, mons: list[str], archetype: str = "balance") -> list[dict]:
+    """Critique a monotype team against its archetype: role coverage, gaps, redundancy,
+    speed control, and the opposing monotypes it is weakest against."""
+    cb = settings.crystal_battle_path
+    ms = md.type_moveset(cb, type_name.lower())
+    if not ms:
+        return []
+    keymap = {k.lower(): k for k in ms}
+    team = [keymap[m.lower()] for m in mons if m.lower() in keymap]
+    if not team:
+        return []
+    arch = _archetype(archetype)
+    Typ = type_name.capitalize()
+    lbl = "" if archetype.lower() == "balance" else f" {archetype.lower()}"
+    lines = [f"Analysis of a Gen 9 Monotype{lbl} {Typ} team ({', '.join(team)}):"] \
+        + _analysis_lines(type_name, team, ms, arch)
+    return [_passage("tool#analyze_team", f"{Typ} monotype team analysis", "\n".join(lines))] \
+        + _corpus_docs([f"gen9monotype_matchup#{Typ}"])
 
 
 def _corpus_docs(sources: list[str]) -> list[dict]:
