@@ -24,32 +24,35 @@ _TSV = ("(setweight(to_tsvector('english', coalesce(title,'')), 'A') || "
 # a title hit on generic "move", and OR-querying every question word floods the
 # leg with common-word matches. So we select the question's rarest lexemes
 # ourselves, from a document-frequency table computed at first use.
-_df_cache: dict[str, int] | None = None
-_doc_count: int = 0
+# keyed by allow_monotype: OU queries use a df table computed WITHOUT the monotype
+# chunks, so a niche format's docs never shift the ceiling or term rarity for the
+# default (see _NOT_MONO). Both entries are built lazily on first use.
+_df_cache: dict[bool, tuple[dict[str, int], int]] = {}
 KW_TERMS = 4       # search at most the N rarest question terms
 KW_MAX_DF = 0.05   # ignore terms in >5% of DOCUMENTS: "move" matches 900 titles.
                    # (Of documents, not of the max lexeme frequency: popular entity
                    # names appear in every teammate list and must stay searchable.)
 
 
-def _lexeme_df(conn) -> dict[str, int]:
-    global _df_cache, _doc_count
-    if _df_cache is None:
+def _lexeme_df(conn, allow_monotype: bool = True) -> tuple[dict[str, int], int]:
+    if allow_monotype not in _df_cache:
+        filt = "" if allow_monotype else "WHERE strpos(source, 'gen9monotype') = 0"
         with conn.cursor() as cur:
-            cur.execute(f"SELECT word, ndoc FROM ts_stat($$SELECT {_TSV} FROM chunks$$)")
-            _df_cache = {w: n for w, n in cur.fetchall()}
-            cur.execute("SELECT count(*) FROM chunks")
-            _doc_count = cur.fetchone()[0]
-    return _df_cache
+            cur.execute(f"SELECT word, ndoc FROM ts_stat($$SELECT {_TSV} FROM chunks {filt}$$)")
+            df = {w: n for w, n in cur.fetchall()}
+            cur.execute(f"SELECT count(*) FROM chunks {filt}")
+            doc_count = cur.fetchone()[0]
+        _df_cache[allow_monotype] = (df, doc_count)
+    return _df_cache[allow_monotype]
 
 
-def _rare_terms(conn, question: str) -> list[str]:
+def _rare_terms(conn, question: str, allow_monotype: bool = True) -> list[str]:
     """Stem the question, keep lexemes that exist in the corpus, return the rarest."""
     with conn.cursor() as cur:
         cur.execute("SELECT unnest(tsvector_to_array(to_tsvector('english', %s)))", (question,))
         lexemes = [row[0] for row in cur.fetchall()]
-    df = _lexeme_df(conn)
-    ceiling = max(2, int(KW_MAX_DF * _doc_count))
+    df, doc_count = _lexeme_df(conn, allow_monotype)
+    ceiling = max(2, int(KW_MAX_DF * doc_count))
     rare = sorted({l for l in lexemes if l in df and df[l] <= ceiling}, key=lambda l: df[l])
     return rare[:KW_TERMS]
 
@@ -60,13 +63,13 @@ def _rare_terms(conn, question: str) -> list[str]:
 _ACCENT_VARIANTS = {"pokemon": "pokémon", "poke": "poké"}
 
 
-def _phrase_queries(conn, question: str) -> list[str]:
+def _phrase_queries(conn, question: str, allow_monotype: bool = True) -> list[str]:
     """Adjacent-bigram phrase queries: the fallback IDF for questions made entirely
     of common words. No unigram in "the Sleeping Pokemon" survives the df ceiling
     (sleep 2376, pokemon 2179 vs ceiling 1130), but the PHRASE 'sleep <-> pokemon'
     is highly selective. Returns tsquery strings (already-stemmed lexeme form)."""
     words = re.findall(r"[a-z0-9'’é-]+", question.lower())
-    df = _lexeme_df(conn)
+    df, _ = _lexeme_df(conn, allow_monotype)
     out = []
     for a, b in zip(words, words[1:]):
         for va, vb in {(a, b), (_ACCENT_VARIANTS.get(a, a), _ACCENT_VARIANTS.get(b, b))}:
@@ -80,12 +83,22 @@ def _phrase_queries(conn, question: str) -> list[str]:
     return out
 
 
-async def retrieve(question: str, k: int | None = None, corpus: str | None = None) -> list[dict]:
+_NOT_MONO = "source NOT LIKE '%%gen9monotype%%'"
+
+
+async def retrieve(question: str, k: int | None = None, corpus: str | None = None,
+                   allow_monotype: bool = True) -> list[dict]:
     """Vector leg: top-k chunks by cosine similarity."""
     k = k or settings.top_k
     qvec = await embed_one(question)
-    where = "WHERE corpus = %s" if corpus else ""
-    params = [qvec] + ([corpus] if corpus else []) + [qvec, k]
+    conds, params = [], [qvec]
+    if corpus:
+        conds.append("corpus = %s")
+        params.append(corpus)
+    if not allow_monotype:
+        conds.append(_NOT_MONO)
+    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    params += [qvec, k]
     with connect() as conn, conn.cursor() as cur:
         # cosine distance -> similarity = 1 - distance
         cur.execute(
@@ -102,26 +115,28 @@ async def retrieve(question: str, k: int | None = None, corpus: str | None = Non
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-def _keyword_leg(question: str, k: int, corpus: str | None) -> list[dict]:
+def _keyword_leg(question: str, k: int, corpus: str | None, allow_monotype: bool = True) -> list[dict]:
     """Keyword leg: top-k chunks by weighted full-text rank over the question's
     rarest terms (OR-semantics: comparisons name several entities, and no doc
     contains them all). Only rare terms are searched (df ceiling), which is the
     IDF that Postgres ts_rank lacks; with common terms excluded, repetition
     flooding is gone and no length normalization is needed."""
     with connect() as conn:
-        terms = _rare_terms(conn, question)
+        terms = _rare_terms(conn, question, allow_monotype)
         if terms:
             tsq = " | ".join(terms)
             tsq_expr = "to_tsquery('english', %s)"
         else:
             # every unigram is too common to search: fall back to adjacent-word
             # phrases, whose adjacency supplies the selectivity the words lack
-            phrases = _phrase_queries(conn, question)
+            phrases = _phrase_queries(conn, question, allow_monotype)
             if not phrases:
                 return []
             tsq = " | ".join(f"({p})" for p in phrases)
             tsq_expr = "%s::tsquery"
         where = "AND corpus = %s" if corpus else ""
+        if not allow_monotype:
+            where += f" AND {_NOT_MONO}"
         params = [tsq, tsq] + ([corpus] if corpus else []) + [k]
         with conn.cursor() as cur:
             cur.execute(
@@ -139,11 +154,18 @@ def _keyword_leg(question: str, k: int, corpus: str | None) -> list[dict]:
             return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-async def retrieve_hybrid(question: str, k: int | None = None, corpus: str | None = None) -> list[dict]:
-    """Both legs, fused with reciprocal rank fusion; top-k passages win."""
+async def retrieve_hybrid(question: str, k: int | None = None, corpus: str | None = None,
+                          allow_monotype: bool = True) -> list[dict]:
+    """Both legs, fused with reciprocal rank fusion; top-k passages win.
+
+    allow_monotype=False drops gen9monotype passages from the pool: monotype is a
+    niche format, and its per-type set/analysis docs otherwise outrank the OU data
+    on format-unspecified questions (a monotype set named "Choice Scarf" hijacking
+    "what does a Choice Scarf do"). OU is the default; the router opens the gate only
+    when the question names monotype or a single-type team."""
     k = k or settings.top_k
-    vec = await retrieve(question, k=POOL, corpus=corpus)
-    kw = _keyword_leg(question, POOL, corpus)
+    vec = await retrieve(question, k=POOL, corpus=corpus, allow_monotype=allow_monotype)
+    kw = _keyword_leg(question, POOL, corpus, allow_monotype=allow_monotype)
 
     fused: dict[int, dict] = {}
     for rank, p in enumerate(vec):
@@ -165,7 +187,7 @@ async def retrieve_hybrid(question: str, k: int | None = None, corpus: str | Non
     # kingambit carry"), so passages whose title carries one of the question's
     # rare terms get a bonus it cannot see
     with connect() as conn:
-        rare = _rare_terms(conn, question)
+        rare = _rare_terms(conn, question, allow_monotype)
     if rare:
         # ordering prior only: the boost must NOT touch rerank_score, which the
         # refusal gate reads ("Point Card" must not open the gate for a question
