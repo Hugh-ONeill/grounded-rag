@@ -311,6 +311,92 @@ def monotype_stat_query(type_name: str, stat: str, n: int = 10, lowest: bool = F
         + _corpus_docs([f"gen9monotype_usage#{Typ}"])
 
 
+# competitive roles inferred from a mon's most-used moves/items (Stage 1 recommender)
+_ROLE_MOVES = {
+    "hazard setter": {"stealth rock", "spikes", "toxic spikes", "sticky web", "ceaseless edge", "stone axe"},
+    "hazard control": {"rapid spin", "defog", "mortal spin", "tidy up"},
+    "pivot": {"u-turn", "volt switch", "flip turn", "teleport", "parting shot", "chilly reception"},
+    "setup sweeper": {"swords dance", "dragon dance", "nasty plot", "calm mind", "quiver dance",
+                      "shell smash", "bulk up", "agility", "victory dance", "clangorous soul",
+                      "no retreat", "belly drum"},
+    "cleric": {"wish", "heal bell", "aromatherapy"},
+    "screens": {"reflect", "light screen", "aurora veil"},
+    "status spreader": {"will-o-wisp", "thunder wave", "toxic", "spore", "sleep powder", "glare", "nuzzle"},
+}
+_RECOVERY = {"recover", "roost", "slack off", "soft-boiled", "morning sun", "moonlight",
+             "synthesis", "rest", "milk drink", "shore up", "strength sap", "wish", "jungle healing"}
+_CHOICE_OFFENSE = {"choice band", "choice specs", "life orb"}
+
+
+def _team_roles(entry: dict) -> list[str]:
+    """Infer competitive roles from a mon's most-used moves and top items."""
+    moves = {m.lower() for m, _ in entry.get("moves", [])}
+    items = {i.lower() for i, _ in entry.get("items", [])[:3]}
+    roles = [role for role, kws in _ROLE_MOVES.items() if moves & kws]
+    if moves & _RECOVERY:
+        roles.append("wall / staller")
+    if "choice scarf" in items:
+        roles.append("speed control")
+    if items & _CHOICE_OFFENSE and "setup sweeper" not in roles:
+        roles.append("wallbreaker")
+    return roles
+
+
+def recommend_teammates(type_name: str, have: list[str] | None = None,
+                        want_role: str | None = None, n: int = 6) -> list[dict]:
+    """Grounded monotype teammate suggestions: rank the <type> meta by usage, or —
+    when a partial core is given — by how often each candidate is observed alongside
+    that core (Smogon teammate co-occurrence), each tagged with its role, plus the
+    roles the current core is missing."""
+    have = have or []
+    cb = settings.crystal_battle_path
+    movesets = md.type_moveset(cb, type_name.lower())
+    if not movesets:
+        return []
+    usage = dict(md.type_usage(cb, type_name.lower()))
+    have_lc = {h.lower() for h in have}
+    have_names = [m for m in movesets if m.lower() in have_lc]
+    tm = {h: {n2.lower(): p for n2, p in movesets[h].get("teammates", [])} for h in have_names}
+
+    cands = []
+    for mon, entry in movesets.items():
+        if mon.lower() in have_lc:
+            continue
+        roles = _team_roles(entry)
+        if want_role and want_role not in roles:
+            continue
+        u = usage.get(mon, 0.0)
+        coocc = (sum(tm[h].get(mon.lower(), 0.0) for h in have_names) / len(have_names)) if have_names else 0.0
+        cands.append((mon, u, coocc, roles))
+    if not cands:
+        return []
+    cands.sort(key=lambda c: (c[2], c[1]) if have_names else (c[1], 0.0), reverse=True)
+    cands = cands[:n]
+
+    Typ = type_name.capitalize()
+    if have_names:
+        head = (f"Recommended {Typ}-type teammates in Gen 9 Monotype to pair with "
+                f"{', '.join(have_names)}, ranked by how often they are used together "
+                f"(Smogon teammate stats):")
+    else:
+        head = (f"Recommended {Typ}-type teammates in Gen 9 Monotype — the staple "
+                f"partners on {Typ} teams, ranked by usage:")
+    lines = [head]
+    for mon, u, coocc, roles in cands:
+        tag = f" — {', '.join(roles)}" if roles else ""
+        extra = f", {coocc:.0f}% together" if have_names and coocc else ""
+        lines.append(f"- {mon} ({u:.0f}% usage{extra}){tag}")
+    if have_names:
+        core_roles = set().union(*(set(_team_roles(movesets[h])) for h in have_names))
+        key_roles = ["hazard setter", "hazard control", "speed control", "wall / staller", "pivot"]
+        missing = [r for r in key_roles if r not in core_roles]
+        if missing:
+            lines.append("Roles your current core lacks: " + ", ".join(missing)
+                         + " — prioritize teammates that provide them.")
+    return [_passage("tool#recommend_teammates", f"{Typ} monotype teammates", "\n".join(lines))] \
+        + _corpus_docs([f"gen9monotype_usage#{Typ}"])
+
+
 def _corpus_docs(sources: list[str]) -> list[dict]:
     """Fetch the corpus documents a tool computed FROM, as citable passages:
     a damage calc's provenance is the pokedex and move docs behind its inputs."""

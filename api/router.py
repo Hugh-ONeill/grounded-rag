@@ -34,11 +34,16 @@ _SUPERLATIVE = re.compile(
 _MONOTYPE = re.compile(
     r"\bmono[- ]?type\b|\bmono[- ]?(?:bug|dark|dragon|electric|fairy|fighting|fire|"
     r"flying|ghost|grass|ground|ice|normal|poison|psychic|rock|steel|water)\b", re.I)
-# "a Steel team" / "fairy-type team" — in competitive play an all-one-type team only
-# exists in monotype, so this is a monotype signal even without the word "monotype".
+# "a Steel team" / "fairy-type team" / "steel teammates" — an all-one-type team (and
+# its same-type partners) only exists in monotype, so this signals monotype even
+# without the word "monotype".
 _TYPE_TEAM = re.compile(
     r"\b(?:bug|dark|dragon|electric|fairy|fighting|fire|flying|ghost|grass|ground|ice|"
-    r"normal|poison|psychic|rock|steel|water)(?:[- ]?type)?\s+teams?\b", re.I)
+    r"normal|poison|psychic|rock|steel|water)(?:[- ]?type)?\s+(?:teams?|teammates?|partners?)\b", re.I)
+# teammate-recommendation intent (fires only with a type present, i.e. monotype)
+_TEAMMATE = re.compile(
+    r"\bteammates?\b|\bpartners?\b|pairs? (?:with|well|nicely|up)|pair well|goes? well"
+    r"|round out|fill out|complement|what (?:else )?(?:to|should i|can i) (?:add|run|pair|bring)", re.I)
 _DAMAGE = re.compile(
     r"\bohko\w*|\b\dhko\b|one[- ]shot|how much damage|damage (?:does|output|calculation|against|to|on)\b"
     r"|\bcalculate\b|\boutput\b|knock(?:s|ed|ing)?(?: \w+)? out|taken out|\bsingle hit\b|\bone hit\b"
@@ -318,6 +323,15 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
             p = tools.monotype_stat_query(types[0], stat, lowest=lowest)
             if p:
                 return p
+
+    # monotype teammate recommender: "good Steel teammates for Gholdengo" / "what
+    # pairs with Heatran on a Steel team" -> ranked same-type partners tagged by role.
+    # Requires a type (a same-type team only exists in monotype), so OU teammate
+    # questions fall through to retrieval.
+    if _TEAMMATE.search(question) and types:
+        p = tools.recommend_teammates(types[0], have=mons)
+        if p:
+            return p
 
     # "fastest Ghost-type Pokemon", "highest Attack among Water types"
     if _SUPERLATIVE.search(question) and types and not mons and not mono_intent:

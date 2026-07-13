@@ -434,7 +434,7 @@
   expect_keywords: ["earth power"]
 
 - question: "What are common teammates for Heatran on a Steel monotype team?"
-  expect_source: "gen9monotype_set#Steel-Heatran"
+  expect_source: ["tool#recommend_teammates", "gen9monotype_set#Steel-Heatran"]
   expect_keywords: ["gholdengo"]
 
 - question: "What types does a Bug team struggle against in monotype?"
@@ -452,6 +452,18 @@
 - question: "What is the fastest Pokémon on a Steel monotype team?"
   expect_source: "tool#monotype_stat_query"
   expect_keywords: ["iron treads"]
+
+- question: "Which Steel-type teammates pair well with Gholdengo in monotype?"
+  expect_source: "tool#recommend_teammates"
+  expect_keywords: ["heatran"]
+
+- question: "What are good teammates on a Fairy monotype team?"
+  expect_source: "tool#recommend_teammates"
+  expect_keywords: ["flutter mane"]
+
+- question: "What pairs well with Heatran on a Steel monotype team?"
+  expect_source: "tool#recommend_teammates"
+  expect_keywords: ["gholdengo"]
 
 - question: "What was the prize pool for the 2026 Gen 9 Monotype Championship?"
   no_answer: true
