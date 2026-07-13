@@ -11,8 +11,11 @@ import re
 from pathlib import Path
 from config import settings
 
-FORMATS = {"gen9": ["ou"], "gen2": ["ou"]}
-FMT_LABEL = {"gen9ou": "Gen 9 OU (gen9ou)", "gen2ou": "Gen 2 OU (gen2ou)"}
+# "ou" stays first per gen: standard_set() (the calc default) takes the first
+# format's set, and monotype sets must not override the OU calc default.
+FORMATS = {"gen9": ["ou", "monotype"], "gen2": ["ou"]}
+FMT_LABEL = {"gen9ou": "Gen 9 OU (gen9ou)", "gen2ou": "Gen 2 OU (gen2ou)",
+             "gen9monotype": "Gen 9 Monotype (gen9monotype)"}
 
 
 def _strip_html(text: str) -> str:
