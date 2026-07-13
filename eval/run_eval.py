@@ -10,6 +10,10 @@ Measures, over a set of gold questions:
   - ungrounded entities  : known Pokemon/move names the answer mentions that appear in
                            NO retrieved passage — knowledge leakage the keyword proxy
                            can't see (the model decorating answers from world knowledge)
+  - paraphrase hit-rate  : frozen rewordings of each gold question (eval/paraphrases.yaml,
+                           see gen_paraphrases.py) must land on the same expect_source, or
+                           still be refused for no-answer originals — phrasing robustness,
+                           scored separately so the canonical-phrasing rows stay comparable
 
 Run:  python -m eval.run_eval
 Then paste the printed table into the README's Evaluation section.
@@ -29,6 +33,15 @@ from router import route, find_entity_names   # noqa: E402
 from llm import answer_stream, condense_question    # noqa: E402
 
 
+def _src_hit(item, passages) -> bool:
+    """expect_source may be one substring or an any-of list: "how do I deal with
+    Kingambit?" is answered equally well by the chaos checks data or the Smogon
+    analysis prose, and pinning one of them makes paraphrase misses meaningless."""
+    want = item.get("expect_source", "∅")
+    wants = want if isinstance(want, list) else [want]
+    return any(w in (p["source"] or "") for p in passages for w in wants)
+
+
 def _squash(s: str) -> str:
     """Lowercase alphanumerics only: 'Shadow Ball' matches the raw 'shadowball' in
     chaos docs. Loses word boundaries, so short common-word move names ('rest')
@@ -46,14 +59,33 @@ async def main():
         qfile = Path(__file__).parent / "questions.example.yaml"
     questions = yaml.safe_load(qfile.read_text())
 
+    pfile = Path(__file__).parent / "paraphrases.yaml"
+    paraphrases = {}
+    if pfile.exists():
+        paraphrases = {e["question"]: e["paraphrases"] for e in yaml.safe_load(pfile.read_text())}
+
     hits = faith = faith_total = refuse_ok = refuse_total = refuse_gate = 0
-    answerable = fu_hits = fu_total = leaks = 0
+    answerable = fu_hits = fu_total = leaks = para_hits = para_total = 0
 
     for item in questions:
         q = item["question"]
         if item.get("history"):
             q = await condense_question(q, item["history"])
         passages = await route(q, corpus=item.get("corpus"))
+
+        # phrasing robustness: reworded variants must land on the same source, or,
+        # for no-answer originals, still be refused by one of the two layers
+        for p in paraphrases.get(item["question"], []):
+            pp = await route(p, corpus=item.get("corpus"))
+            para_total += 1
+            if item.get("no_answer"):
+                ok = (not passes_threshold(pp)
+                      or "don't know" in (await _full_answer(p, pp)).lower())
+            else:
+                ok = _src_hit(item, pp)
+            para_hits += ok
+            if not ok:
+                print(f"  paraphrase miss: {p!r} (of: {item['question']!r})")
 
         if item.get("no_answer"):
             # refusal is layered: the retrieval gate fires on off-topic questions, but a
@@ -70,7 +102,7 @@ async def main():
                 print(f"  refusal miss: {item['question']!r} -> asked as: {q!r}")
             continue
 
-        hit = any(item.get("expect_source", "∅") in (p["source"] or "") for p in passages)
+        hit = _src_hit(item, passages)
         if item.get("history"):
             fu_total += 1
             fu_hits += hit
@@ -107,13 +139,14 @@ async def main():
     print("|--------|-------|")
     print(f"| Retrieval hit-rate@k | {pct(hits, answerable)} ({hits}/{answerable}) |")
     print(f"| Follow-up hit-rate (condense → retrieve) | {pct(fu_hits, fu_total)} ({fu_hits}/{fu_total}) |")
+    print(f"| Paraphrase hit-rate | {pct(para_hits, para_total)} ({para_hits}/{para_total}) |")
     print(f"| Answer faithfulness | {pct(faith, faith_total)} ({faith}/{faith_total}) |")
     print(f"| Refusal precision (no-answer) | {pct(refuse_ok, refuse_total)} ({refuse_ok}/{refuse_total}: "
           f"{refuse_gate} gate, {refuse_ok - refuse_gate} generator) |")
     print(f"| Ungrounded entity mentions | {leaks} (over {faith_total} generated answers) |")
 
     if (hits < answerable or fu_hits < fu_total or refuse_ok < refuse_total
-            or faith < faith_total or leaks):
+            or faith < faith_total or leaks or para_hits < para_total):
         sys.exit(1)
 
 
