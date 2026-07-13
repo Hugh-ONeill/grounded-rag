@@ -196,6 +196,73 @@ def speed_check(name_a: str, name_b: str) -> list[dict]:
         + _corpus_docs([f"pokedex#{a['name']}", f"pokedex#{b['name']}"])
 
 
+def _usage_rankings(fmt: str = "gen9ou") -> list[tuple[str, float]]:
+    """(name, usage%) pairs parsed from the synthetic usage-rankings document —
+    the top-30 meta filter for tools that would otherwise list 900 Pokemon."""
+    try:
+        from db import connect
+        import re as _re
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT content FROM chunks WHERE source = %s ORDER BY id",
+                        (f"{fmt}_chaos#usage_rankings",))
+            text = "\n".join(r[0] for r in cur.fetchall())
+        out, seen = [], set()
+        # the doc spans chunks whose 150-char overlap repeats a ranking line
+        for m in _re.finditer(r"^\d+\. (.+?) \(([\d.]+)%\)", text, _re.M):
+            if m.group(1) not in seen:
+                seen.add(m.group(1))
+                out.append((m.group(1), float(m.group(2))))
+        return out
+    except Exception:
+        return []
+
+
+def speed_tiers(name: str, fmt: str = "gen9ou") -> list[dict]:
+    """What outspeeds this Pokemon: faster mons from the usage top-30, speed ties,
+    and the Choice Scarf math (x1.5) for slower mons that outspeed when scarfed."""
+    d = _data()
+    mon = d["mons"].get(name.lower())
+    if not mon or not mon["stats"]:
+        return []
+    s = mon["stats"].get("Speed", 0)
+    meta = _usage_rankings(fmt)
+    if not meta:
+        return []
+    rows = []
+    for n, u in meta:
+        m = d["mons"].get(n.lower())
+        if m and m["stats"] and n != mon["name"]:
+            rows.append((n, m["stats"].get("Speed", 0), u))
+    faster = sorted([r for r in rows if r[1] > s], key=lambda r: r[1], reverse=True)
+    ties = [r for r in rows if r[1] == s]
+    # level 100, 31 IV, 252 EV, neutral nature: stat = 2*base + 99. A scarfed mon
+    # outspeeds when 1.5*(2b+99) > (2s+99), i.e. base above this floor:
+    scarf_floor = int(((2 * s + 99) / 1.5 - 99) / 2) + 1
+    scarfers = sorted([r for r in rows if scarf_floor <= r[1] <= s],
+                      key=lambda r: r[1], reverse=True)
+
+    def fmt_rows(rs):
+        return ", ".join(f"{n} (base {sp}, {u:.1f}% usage)" for n, sp, u in rs)
+
+    lines = [f"Speed tiers vs {mon['name']} (base Speed {s}), computed from base stats "
+             f"against the {fmt} usage top 30."]
+    lines.append(f"Faster than {mon['name']}: {fmt_rows(faster)}." if faster else
+                 f"No Pokemon in the {fmt} usage top 30 has a higher base Speed than "
+                 f"{mon['name']}.")
+    if ties:
+        lines.append(f"Speed ties with {mon['name']}: {fmt_rows(ties)}.")
+    scarf = (f"Choice Scarf math: a Choice Scarf multiplies Speed by 1.5, so with max "
+             f"investment on both sides, scarfed Pokemon with base Speed {scarf_floor} or "
+             f"higher also outspeed {mon['name']}.")
+    if scarfers:
+        scarf += f" Among the top 30, that adds: {fmt_rows(scarfers)}."
+    lines.append(scarf)
+    lines.append("Note: natures, Speed EVs, boosts, paralysis, and Tailwind change "
+                 "effective speed in battle; this assumes equal max investment.")
+    return [_passage("tool#speed_tiers", f"what outspeeds {mon['name']}", "\n".join(lines))] \
+        + _corpus_docs([f"pokedex#{mon['name']}", f"{fmt}_chaos#usage_rankings"])
+
+
 def stat_query(stat: str, type_filter: str | None = None, n: int = 10,
                lowest: bool = False) -> list[dict]:
     """Top-N Pokemon by a base stat, optionally filtered to one type."""

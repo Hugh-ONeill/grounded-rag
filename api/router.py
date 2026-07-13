@@ -25,8 +25,8 @@ _MATCHUP = re.compile(
     r"|weak (?:to|against)|weakness(?:es)?|resists?|susceptible|immune|affects?"
     r"|fare against|much damage|damage (?:to|against)|\bhit(?:s|ting)?\b", re.I)
 _SPEED_VS = re.compile(
-    r"\bfaster\b|\boutspeeds?\b|\bslower\b|\bquicker\b|higher speed|more speed"
-    r"|speed advantage|compare .{0,24}speed", re.I)
+    r"\bfaster\b|\boutspeeds?\b|\boutpaces?\b|\boutruns?\b|\bslower\b|\bquicker\b"
+    r"|higher speed|more speed|speed advantage|compare .{0,24}speed", re.I)
 _SUPERLATIVE = re.compile(
     r"\b(fastest|slowest|highest|lowest|best|most|bulkiest|quickest|maximum|largest|greatest)\b", re.I)
 _DAMAGE = re.compile(
@@ -215,6 +215,13 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
     # "who is faster, X or Y" / "does X outspeed Y"
     if _SPEED_VS.search(question) and len(mons) == 2:
         p = tools.speed_check(mons[0], mons[1])
+        if p:
+            return p
+
+    # "what outspeeds Garchomp?" — one mon + a speed verb is the tiers question:
+    # meta-relevant faster mons, ties, and the Choice Scarf math
+    if _SPEED_VS.search(question) and len(mons) == 1:
+        p = tools.speed_tiers(mons[0])
         if p:
             return p
 
