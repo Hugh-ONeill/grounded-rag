@@ -10,6 +10,7 @@ import csv
 from functools import lru_cache
 from pathlib import Path
 from config import settings
+from corpora import monotype_data as md
 
 EN = "9"
 
@@ -279,6 +280,35 @@ def stat_query(stat: str, type_filter: str | None = None, n: int = 10,
              f"alternate forms included): "
              + ", ".join(f"{i}. {name} ({v})" for i, (v, name) in enumerate(rows, 1))]
     return [_passage("tool#stat_query", f"{order} {stat}: {scope}", lines[0])]
+
+
+def monotype_stat_query(type_name: str, stat: str, n: int = 10, lowest: bool = False) -> list[dict]:
+    """Top-N by a base stat among the Pokemon actually used on a <type> monotype
+    team (the meta skeleton from gen9monotype usage), not the whole species pool —
+    "fastest on a Steel team" should mean the fastest Steel mon people run, not the
+    fastest Steel-type in the game."""
+    meta = md.type_usage(settings.crystal_battle_path, type_name.lower())
+    if not meta:
+        return []
+    d = _data()
+    rows = []
+    for name, usage in meta[:20]:
+        m = d["mons"].get(name.lower())
+        if m and m["stats"]:
+            rows.append((m["stats"].get(stat, 0), m["name"], usage))
+    if not rows:
+        return []
+    rows.sort(reverse=not lowest)
+    rows = rows[:n]
+    Typ = type_name.capitalize()
+    order = "lowest" if lowest else "highest"
+    body = (f"{order.capitalize()} base {stat} among the Pokemon commonly used on "
+            f"{Typ}-type teams in Gen 9 Monotype (gen9monotype usage; base stats computed): "
+            + ", ".join(f"{i}. {name} (base {v}, {u:.0f}% usage)"
+                        for i, (v, name, u) in enumerate(rows, 1)) + ".")
+    return [_passage("tool#monotype_stat_query",
+                     f"{order} {stat} on {Typ} monotype teams", body)] \
+        + _corpus_docs([f"gen9monotype_usage#{Typ}"])
 
 
 def _corpus_docs(sources: list[str]) -> list[dict]:

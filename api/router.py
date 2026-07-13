@@ -29,6 +29,16 @@ _SPEED_VS = re.compile(
     r"|higher speed|more speed|speed advantage|compare .{0,24}speed", re.I)
 _SUPERLATIVE = re.compile(
     r"\b(fastest|slowest|highest|lowest|best|most|bulkiest|quickest|maximum|largest|greatest)\b", re.I)
+# monotype intent: the word "monotype" or a "mono-<type>" phrasing. Superlative
+# stat questions in this format must rank the monotype meta, not the whole dex.
+_MONOTYPE = re.compile(
+    r"\bmono[- ]?type\b|\bmono[- ]?(?:bug|dark|dragon|electric|fairy|fighting|fire|"
+    r"flying|ghost|grass|ground|ice|normal|poison|psychic|rock|steel|water)\b", re.I)
+# "a Steel team" / "fairy-type team" — in competitive play an all-one-type team only
+# exists in monotype, so this is a monotype signal even without the word "monotype".
+_TYPE_TEAM = re.compile(
+    r"\b(?:bug|dark|dragon|electric|fairy|fighting|fire|flying|ghost|grass|ground|ice|"
+    r"normal|poison|psychic|rock|steel|water)(?:[- ]?type)?\s+teams?\b", re.I)
 _DAMAGE = re.compile(
     r"\bohko\w*|\b\dhko\b|one[- ]shot|how much damage|damage (?:does|output|calculation|against|to|on)\b"
     r"|\bcalculate\b|\boutput\b|knock(?:s|ed|ing)?(?: \w+)? out|taken out|\bsingle hit\b|\bone hit\b"
@@ -211,6 +221,9 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
     otherwise from hybrid retrieval."""
     mons = _find_mons(question)
     types = _find_types(question)
+    # monotype is opt-in: only surface its docs/tools when the question names
+    # monotype or a single-type team, else default hard to OU (see retrieve_hybrid).
+    mono_intent = bool(_MONOTYPE.search(question) or _TYPE_TEAM.search(question))
 
     # "who is faster, X or Y" / "does X outspeed Y"
     if _SPEED_VS.search(question) and len(mons) == 2:
@@ -296,8 +309,18 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
         if len(types) == 1:
             return tools.defensive_profile(types[0])
 
+    # monotype superlatives ("fastest on a Steel monotype team") rank the monotype
+    # meta pool, not the whole dex; guards the generic stat_query branch below.
+    if mono_intent and _SUPERLATIVE.search(question) and types:
+        stat = next((STATS[k] for k in STATS if re.search(rf"\b{k}\b", question, re.I)), None)
+        if stat:
+            lowest = bool(re.search(r"\b(slowest|lowest)\b", question, re.I))
+            p = tools.monotype_stat_query(types[0], stat, lowest=lowest)
+            if p:
+                return p
+
     # "fastest Ghost-type Pokemon", "highest Attack among Water types"
-    if _SUPERLATIVE.search(question) and types and not mons:
+    if _SUPERLATIVE.search(question) and types and not mons and not mono_intent:
         stat = next((STATS[k] for k in STATS if re.search(rf"\b{k}\b", question, re.I)), None)
         if stat:
             lowest = bool(re.search(r"\b(slowest|lowest)\b", question, re.I))
@@ -311,8 +334,8 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
     if re.search(r"\bcounters?\b|\bchecks?\b|most used|most common(?:ly)?|usually|\busage\b"
                  r"|almost every|nearly (?:all|every)|good answers to|deal with|\bbeats?\b"
                  r"|frequent(?:ly)?|\boften\b|relies on", question, re.I) and corpus is None:
-        scoped = await retrieve_hybrid(question, corpus="crystal_battle")
+        scoped = await retrieve_hybrid(question, corpus="crystal_battle", allow_monotype=mono_intent)
         if scoped and passes_threshold(scoped):
             return scoped
 
-    return await retrieve_hybrid(question, corpus=corpus)
+    return await retrieve_hybrid(question, corpus=corpus, allow_monotype=mono_intent)
