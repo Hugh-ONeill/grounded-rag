@@ -10,21 +10,38 @@ import tools
 from retrieve import retrieve_hybrid, passes_threshold
 
 STATS = {
-    "speed": "Speed", "fastest": "Speed", "slowest": "Speed",
+    "speed": "Speed", "fastest": "Speed", "slowest": "Speed", "quickest": "Speed",
     "hp": "HP", "attack": "Attack", "defense": "Defense", "defence": "Defense",
     "special attack": "Special Attack", "special defense": "Special Defense",
     "bulkiest": "HP",
 }
 
+# The verb vocabularies below were each widened when the paraphrase gold set showed
+# real-user rewordings dodging them ("one-shot", "knocked out in one hit", "quickest",
+# "susceptible to", "compare the speed"). Safe to keep broad: every branch still
+# requires positively-identified entities before it fires.
 _MATCHUP = re.compile(
-    r"super effective|not very effective|effective against|weak (?:to|against)|resists?|immune|\bhits?\b", re.I)
-_SPEED_VS = re.compile(r"\bfaster\b|\boutspeeds?\b|\bslower\b", re.I)
-_SUPERLATIVE = re.compile(r"\b(fastest|slowest|highest|lowest|best|most|bulkiest)\b", re.I)
-_DAMAGE = re.compile(r"\bohko\b|\b\dhko\b|how much damage|damage does|\bkill\b|\bsurviv", re.I)
+    r"super effective|not very effective|effective against|how effective|effectiveness"
+    r"|weak (?:to|against)|weakness(?:es)?|resists?|susceptible|immune|affects?"
+    r"|fare against|much damage|damage (?:to|against)|\bhit(?:s|ting)?\b", re.I)
+_SPEED_VS = re.compile(
+    r"\bfaster\b|\boutspeeds?\b|\bslower\b|\bquicker\b|higher speed|more speed"
+    r"|speed advantage|compare .{0,24}speed", re.I)
+_SUPERLATIVE = re.compile(
+    r"\b(fastest|slowest|highest|lowest|best|most|bulkiest|quickest|maximum|largest|greatest)\b", re.I)
+_DAMAGE = re.compile(
+    r"\bohko\w*|\b\dhko\b|one[- ]shot|how much damage|damage (?:does|output|calculation|against|to|on)\b"
+    r"|\bcalculate\b|\boutput\b|knock(?:s|ed|ing)?(?: \w+)? out|taken out|\bsingle hit\b|\bone hit\b"
+    r"|\bkill\b|\bsurviv", re.I)
 _SURVIVE_HOW = re.compile(
-    r"(?:what would|what does|what do|how (?:can|could|do)|needs?|needed|required?|take[s]? (?:for|to)|make).{0,60}\b(?:survive|tank|withstand)\b", re.I)
+    r"(?:what would|what does|what do|how (?:can|could|do)|is there (?:any|a) way|best way"
+    r"|needs?|needed|required?|take[s]? (?:for|to)|make).{0,60}"
+    r"\b(?:survive|tank|withstand|avoid being (?:knocked out|ohko\w*)|take (?:a|an|one)\b)", re.I)
 _OHKO_HOW = re.compile(
-    r"(?:what would|what does|what do|how (?:can|could|do)|needs?|needed|required?|take[s]? (?:for|to)|make).{0,60}\bohko\b", re.I)
+    r"(?:what would|what does|what do|how (?:can|could|do)|how much|is there (?:any|a) way"
+    r"|needs?|needed|must|required?|take[s]? (?:for|to)|make).{0,60}\b(?:ohko\w*|one[- ]shot)"
+    # requirement verb can trail the KO word: "in order to OHKO X, how much must ..."
+    r"|\b(?:ohko\w*|one[- ]shot)\b.{0,60}\b(?:must|needs?|required?)\b", re.I)
 
 # battle-state modifiers, parsed out of the question BEFORE move detection so
 # "after a Swords Dance" is a boost, not the attacking move
@@ -111,9 +128,11 @@ def _parse_mods(question: str, mons: list[str]):
         default = fb_dfn if stat in ("HP", "Defense", "Special Defense") else fb_atk
         bind(m.start(), default).setdefault("evs", {})[stat] = 252
     strip(r"(?:max|252)\s+(?:attack|atk|spa|special attack|hp|def|defense|spd|special defense|speed|spe)")
-    for m in re.finditer(r"\bstandard\b|\bsmogon(?:['\u2019]s)? set\b|\bsmogon\b", q):
+    # "typical"/"regular" are how paraphrased questions say "standard"; "normal" is
+    # deliberately NOT a marker (it collides with the Normal type)
+    for m in re.finditer(r"\bstandard\b|\btypical\b|\bregular\b|\bsmogon(?:['\u2019]s)? set\b|\bsmogon\b", q):
         bind(m.start(), fb_atk)["standard"] = True
-    strip(r"\bstandard\b|\bsmogon(?:['\u2019]s)? set\b|\bsmogon\b")
+    strip(r"\bstandard\b|\btypical\b|\bregular\b|\bsmogon(?:['\u2019]s)? set\b|\bsmogon\b")
     m = re.search(r"\bburn(?:ed|t)?\b", q)
     if m:
         bind(m.start(), fb_atk)["status"] = "brn"
@@ -122,13 +141,15 @@ def _parse_mods(question: str, mons: list[str]):
     if m:
         field["weather"] = {"sandstorm": "sand"}.get(m.group(1), m.group(1))
         strip(r"\bin (?:the )?(?:sun|rain|sand(?:storm)?|snow|hail)\b")
-    m = re.search(r"\bin (?:the )?(electric|grassy|psychic|misty) terrain\b", q)
+    # "while grassy terrain is active" / "during grassy terrain" must parse as field
+    # state, or "grassy terrain" gets picked up as the attacking move
+    m = re.search(r"\b(?:in|during|while|under|with) (?:the )?(electric|grassy|psychic|misty) terrain\b", q)
     if m:
         field["terrain"] = m.group(1) + "terrain"
-        strip(r"\bin (?:the )?(?:electric|grassy|psychic|misty) terrain\b")
-    if re.search(r"\bin doubles\b|\bin vgc\b|\bspread\b|\bdouble battle\b", q):
+        strip(r"\b(?:in|during|while|under|with) (?:the )?(?:electric|grassy|psychic|misty) terrain\b(?: is active)?")
+    if re.search(r"\bdoubles\b|\bvgc\b|\bspread\b|\bdouble battle\b", q):
         field["spread"] = True
-        strip(r"\bin doubles\b|\bin vgc\b|\bspread\b|\bdouble battle\b")
+        strip(r"\b(?:in |a |during )*doubles(?: format| play)?\b|\bvgc\b|\bspread\b|\bdouble battle\b")
     m = re.search(r"\btera[- ]?([a-z]+)\b", q)
     if m and m.group(1).capitalize() in tools.known_types():
         bind(m.start(), fb_atk)["tera"] = m.group(1)
@@ -197,22 +218,6 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
         if p:
             return p
 
-    # "is Earthquake effective against Skarmory" / "is Fire effective against Grass"
-    # / "what is Garchomp weak to"
-    if _MATCHUP.search(question):
-        moves = _find_moves(question)
-        if mons and moves:
-            name, typ, _cls = tools.known_moves()[moves[0]]
-            return tools.type_matchup(typ, mons[0], via_move=name)
-        if mons and types:
-            return tools.type_matchup(types[0], mons[0])
-        if mons:
-            return tools.defensive_profile(mons[0])
-        if len(types) >= 2:
-            return tools.type_matchup(types[0], types[1])
-        if len(types) == 1:
-            return tools.defensive_profile(types[0])
-
     # "what would X need to survive Y's Z" -> defensive escalation search
     if _SURVIVE_HOW.search(question) and len(mons) >= 2:
         q0, by_mon, fb_atk, _fb_dfn, field = _parse_mods(question, mons)
@@ -266,6 +271,24 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
             if p:
                 return p
 
+    # "is Earthquake effective against Skarmory" / "is Fire effective against Grass"
+    # / "what is Garchomp weak to" — checked AFTER the damage/OHKO/survive branches,
+    # which are strictly more specific (two mons + a move), so matchup phrasings like
+    # "does Earthquake do much damage to Skarmory" can't hijack real calc questions
+    if _MATCHUP.search(question):
+        moves = _find_moves(question)
+        if mons and moves:
+            name, typ, _cls = tools.known_moves()[moves[0]]
+            return tools.type_matchup(typ, mons[0], via_move=name)
+        if mons and types:
+            return tools.type_matchup(types[0], mons[0])
+        if mons:
+            return tools.defensive_profile(mons[0])
+        if len(types) >= 2:
+            return tools.type_matchup(types[0], types[1])
+        if len(types) == 1:
+            return tools.defensive_profile(types[0])
+
     # "fastest Ghost-type Pokemon", "highest Attack among Water types"
     if _SUPERLATIVE.search(question) and types and not mons:
         stat = next((STATS[k] for k in STATS if re.search(rf"\b{k}\b", question, re.I)), None)
@@ -279,7 +302,8 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
     # usage-stats corpus (the Counter move and X's own biology pages otherwise
     # crowd out the checks-and-counters data), falling through when it has nothing
     if re.search(r"\bcounters?\b|\bchecks?\b|most used|most common(?:ly)?|usually|\busage\b"
-                 r"|almost every|good answers to", question, re.I) and corpus is None:
+                 r"|almost every|nearly (?:all|every)|good answers to|deal with|\bbeats?\b"
+                 r"|frequent(?:ly)?|\boften\b|relies on", question, re.I) and corpus is None:
         scoped = await retrieve_hybrid(question, corpus="crystal_battle")
         if scoped and passes_threshold(scoped):
             return scoped
