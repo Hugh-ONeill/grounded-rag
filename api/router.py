@@ -268,6 +268,19 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
     team_mons = _find_names(question, tools.known_pokemon(), limit=12)
     arch = _archetype_of(question)
 
+    # a pokepast.es link: critique the real team by its actual sets, or (if the
+    # question asks to build) use its members as the core to build around
+    pp = re.search(r"https?://pokepast\.es/\w+", question, re.I)
+    if pp:
+        url = pp.group(0)
+        if _BUILD_TEAM.search(question):
+            p = tools.generate_ou_team(have=tools.paste_mons(url), archetype=arch,
+                                       variant=_variant_of(question))
+        else:
+            p = tools.analyze_paste(url, archetype=arch)
+        if p:
+            return p
+
     # "who is faster, X or Y" / "does X outspeed Y"
     if _SPEED_VS.search(question) and len(mons) == 2:
         p = tools.speed_check(mons[0], mons[1])

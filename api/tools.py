@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import urllib.request
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
@@ -915,6 +916,98 @@ def analyze_ou_team(mons: list[str], archetype: str = "balance") -> list[dict]:
         + _ou_analysis_lines(team, ms, usage_list, arch)
     return [_passage("tool#analyze_team", "Gen 9 OU team analysis", "\n".join(lines))] \
         + _corpus_docs(["gen9ou_chaos#usage_rankings"])
+
+
+# ---- paste-aware analysis: critique a real team by its ACTUAL sets ----
+
+def _fetch_pokepaste(url):
+    """Fetch the raw Showdown paste behind a pokepast.es URL, or None on failure."""
+    m = re.search(r"pokepast\.es/(\w+)", url)
+    if not m:
+        return None
+    try:
+        req = urllib.request.Request(f"https://pokepast.es/{m.group(1)}/raw",
+                                     headers={"User-Agent": "grounded-rag/0.1"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.read().decode("utf-8", "ignore")
+    except Exception:
+        return None
+
+
+def _parse_paste(text):
+    """Parse a Showdown team paste into [{name, item, moves}], name = species."""
+    mons = []
+    for block in re.split(r"\n\s*\n", text.strip()):
+        lines = [l.rstrip() for l in block.splitlines() if l.strip()]
+        if not lines:
+            continue
+        head, item = lines[0], None
+        if " @ " in head:
+            head, item = head.rsplit(" @ ", 1)
+        head = head.strip()
+        gm = re.match(r"^(.*?)\s*\((?:M|F)\)\s*$", head)   # strip a trailing gender tag
+        if gm:
+            head = gm.group(1).strip()
+        nm = re.match(r"^(.*?)\s*\(([^)]+)\)\s*$", head)   # Nickname (Species) -> Species
+        species = nm.group(2).strip() if nm else head
+        moves = [l.strip()[2:].split("/")[0].strip() for l in lines[1:] if l.strip().startswith("- ")]
+        mons.append({"name": species, "item": item.strip() if item else None, "moves": moves})
+    return mons
+
+
+def _paste_team(src):
+    """Resolve a pokepaste URL or raw paste to (canonical_names, entries-with-actual-sets)."""
+    text = _fetch_pokepaste(src) if "pokepast.es" in src else src
+    if not text:
+        return [], {}
+    mons = _data()["mons"]
+    team, entries = [], {}
+    for p in _parse_paste(text):
+        canon = mons.get(p["name"].lower(), {}).get("name")
+        if not canon or canon in entries:
+            continue
+        team.append(canon)
+        entries[canon] = {"moves": [(m, 100.0) for m in p["moves"]],
+                          "items": [(p["item"], 100.0)] if p.get("item") else [],
+                          "abilities": [], "tera": [], "teammates": [], "spreads": [], "checks": []}
+    return team, entries
+
+
+def paste_mons(src):
+    """The canonical Pokemon names in a pokepaste URL or raw paste (for build-around)."""
+    return _paste_team(src)[0]
+
+
+def analyze_paste(src, archetype: str = "balance") -> list[dict]:
+    """Critique a real team from a pokepast.es URL or raw Showdown paste, using its
+    ACTUAL sets (moves/item) rather than the meta's most-used ones."""
+    team, entries = _paste_team(src)
+    if len(team) < 2:
+        return []
+    arch = _archetype(archetype)
+    typ = team_type(team)   # a shared-type team is monotype; critique it as such
+    if typ:
+        head = f"Analysis of your {typ.capitalize()} monotype team ({', '.join(team)}), from its actual sets:"
+        # entries carry the paste's real moves/item, so role coverage is honest;
+        # the matchup weakness comes from the type chart, not the sets
+        lines = [head] + _analysis_lines(typ, team, entries, arch)
+        return [_passage("tool#analyze_team", "Team analysis (from paste)", "\n".join(lines))]
+    covered = set().union(*(set(_set_roles(entries[m])) for m in team))
+    missing = [r for r in arch["expect"] if r not in covered]
+    holes = _type_weaknesses(team)
+    uncovered = _ou_threats(_ou_movesets("gen9ou"), _ou_usage("gen9ou"), team)
+    lines = [f"Analysis of your team ({', '.join(team)}), from its actual sets:",
+             "Roles covered: " + (", ".join(sorted(covered)) or "none") + "."]
+    if missing:
+        lines.append(f"Missing roles for a {archetype.lower()} team: " + ", ".join(missing) + ".")
+    if arch["speed"] and "speed control" not in covered:
+        lines.append("No dedicated speed control (Choice Scarf / Tailwind) — watch for faster teams.")
+    if holes:
+        lines.append("Type weaknesses (members weak / that resist): "
+                     + "; ".join(f"{a} — {w} weak, {r} resist" for a, w, r in holes[:4]) + ".")
+    if uncovered:
+        lines.append("Top OU threats the team lacks a solid answer to: " + ", ".join(uncovered) + ".")
+    return [_passage("tool#analyze_team", "Team analysis (from paste)", "\n".join(lines))]
 
 
 def _corpus_docs(sources: list[str]) -> list[dict]:
