@@ -86,6 +86,9 @@ def _rankings_doc(fmt: str, data: dict):
         f"ranked by the share of teams they appear on.",
         f"The most used Pokemon in {_pretty_fmt(fmt)} is {top_name}, appearing on "
         f"{100*(top_stats.get('usage') or 0):.1f}% of teams.",
+        # cover the registers real users ask in ("a common sight", "on nearly every
+        # team"), not just the "most used" phrasing the first gold question used
+        f"The top entries are a common sight in {_pretty_fmt(fmt)}, seen on nearly every team.",
     ]
     lines += [f"{i}. {n} ({100*(s.get('usage') or 0):.1f}%)" for i, (n, s) in enumerate(ranked, 1)]
     return {
