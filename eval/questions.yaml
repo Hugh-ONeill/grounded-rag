@@ -483,3 +483,14 @@
 
 - question: "What was the prize pool for the 2026 Gen 9 Monotype Championship?"
   no_answer: true
+
+# ---- Gen 9 OU team builder ----
+# Cored so the keyword tests a requested member (seeded, always present), not an
+# arbitrary auto-pick — we do NOT want to assert a specific mon lands every time.
+- question: "Build me a gen9 OU team around Kingambit and Gholdengo."
+  expect_source: "tool#generate_team"
+  expect_keywords: ["kingambit"]
+
+- question: "Recommend OU teammates for Kingambit."
+  expect_source: "tool#recommend_teammates"
+  expect_keywords: ["great tusk"]

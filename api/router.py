@@ -359,19 +359,21 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
             if p:
                 return p
 
-    # "build me a Steel monotype team" -> assemble + validate a full 6-mon team.
-    # Checked before the teammate recommender (a full-team ask is more specific).
-    if _BUILD_TEAM.search(question) and types:
-        p = tools.generate_team(types[0], have=team_mons, archetype=arch)
+    # "build me a team": monotype when the question signals a single type, else default
+    # to gen9OU (the format most people mean). Checked before the teammate recommender.
+    if _BUILD_TEAM.search(question):
+        p = (tools.generate_team(types[0], have=team_mons, archetype=arch)
+             if mono_intent and types
+             else tools.generate_ou_team(have=team_mons, archetype=arch))
         if p:
             return p
 
-    # monotype teammate recommender: "good Steel teammates for Gholdengo" / "what
-    # pairs with Heatran on a Steel team" -> ranked same-type partners tagged by role.
-    # Requires a type (a same-type team only exists in monotype), so OU teammate
-    # questions fall through to retrieval.
-    if _TEAMMATE.search(question) and types:
-        p = tools.recommend_teammates(types[0], have=team_mons)
+    # teammate recommender: monotype for a single-type signal ("good Steel teammates
+    # for Gholdengo"), else gen9OU ("teammates for Kingambit").
+    if _TEAMMATE.search(question):
+        p = (tools.recommend_teammates(types[0], have=team_mons)
+             if mono_intent and types
+             else tools.recommend_ou_teammates(have=team_mons))
         if p:
             return p
 

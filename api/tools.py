@@ -8,6 +8,7 @@ the corpus adapter reads).
 """
 import csv
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -16,6 +17,11 @@ from functools import lru_cache
 from pathlib import Path
 from config import settings
 from corpora import monotype_data as md
+from corpora import ou_data as ou
+
+
+def _toid(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", s.lower())
 
 EN = "9"
 
@@ -89,8 +95,21 @@ def _data():
             "abilities": p_abils.get(r["id"], []),
             "weight_kg": int(r["weight"] or 0) / 10,
         }
+    # Showdown-id -> display-name maps, so the chaos-JSON tools (which carry ids like
+    # "swordsdance"/"heavydutyboots") can render readable pastes and match roles.
+    try:
+        item_names = {r["item_id"]: r["name"] for r in rows("item_names")
+                      if r["local_language_id"] == EN}
+    except FileNotFoundError:
+        item_names = {}
+    moves_by_id = {_toid(n): n for n in move_names.values()}
+    abilities_by_id = {_toid(n): n for n in ability_names.values()}
+    items_by_id = {_toid(n): n for n in item_names.values()}
+
     return {"chart": chart, "mons": mons, "moves": moves, "spread": spread_moves,
-            "types": sorted(set(type_names.values()))}
+            "types": sorted(set(type_names.values())),
+            "moves_by_id": moves_by_id, "items_by_id": items_by_id,
+            "abilities_by_id": abilities_by_id}
 
 
 def known_pokemon() -> dict:
@@ -358,22 +377,12 @@ def _set_roles(entry: dict) -> list[str]:
                        {entry["items"][0][0].lower()} if entry.get("items") else set())
 
 
-def recommend_teammates(type_name: str, have: list[str] | None = None,
-                        want_role: str | None = None, n: int = 6) -> list[dict]:
-    """Grounded monotype teammate suggestions: rank the <type> meta by usage, or —
-    when a partial core is given — by how often each candidate is observed alongside
-    that core (Smogon teammate co-occurrence), each tagged with its role, plus the
-    roles the current core is missing."""
-    have = have or []
-    cb = settings.crystal_battle_path
-    movesets = md.type_moveset(cb, type_name.lower())
-    if not movesets:
-        return []
-    usage = dict(md.type_usage(cb, type_name.lower()))
+def _rank_teammates(movesets, usage, have, want_role, n):
+    """Rank candidates by teammate co-occurrence with the given core (or by usage when
+    no core), each tagged with its roles. Returns (candidates, have_names)."""
     have_lc = {h.lower() for h in have}
     have_names = [m for m in movesets if m.lower() in have_lc]
-    tm = {h: {n2.lower(): p for n2, p in movesets[h].get("teammates", [])} for h in have_names}
-
+    tm = {h: {x.lower(): p for x, p in movesets[h].get("teammates", [])} for h in have_names}
     cands = []
     for mon, entry in movesets.items():
         if mon.lower() in have_lc:
@@ -384,11 +393,38 @@ def recommend_teammates(type_name: str, have: list[str] | None = None,
         u = usage.get(mon, 0.0)
         coocc = (sum(tm[h].get(mon.lower(), 0.0) for h in have_names) / len(have_names)) if have_names else 0.0
         cands.append((mon, u, coocc, roles))
+    cands.sort(key=lambda c: (c[2], c[1]) if have_names else (c[1], 0.0), reverse=True)
+    return cands[:n], have_names
+
+
+def _teammate_lines(cands, have_names, movesets):
+    lines = []
+    for mon, u, coocc, roles in cands:
+        tag = f" — {', '.join(roles)}" if roles else ""
+        extra = f", {coocc:.0f}% together" if have_names and coocc else ""
+        lines.append(f"- {mon} ({u:.0f}% usage{extra}){tag}")
+    if have_names:
+        core_roles = set().union(*(set(_team_roles(movesets[h])) for h in have_names))
+        missing = [r for r in _KEY_ROLES if r not in core_roles]
+        if missing:
+            lines.append("Roles your current core lacks: " + ", ".join(missing)
+                         + " — prioritize teammates that provide them.")
+    return lines
+
+
+def recommend_teammates(type_name: str, have: list[str] | None = None,
+                        want_role: str | None = None, n: int = 6) -> list[dict]:
+    """Grounded monotype teammate suggestions for a type (usage, or co-occurrence with
+    a given core), each tagged with its role, plus the roles the core is missing."""
+    have = have or []
+    cb = settings.crystal_battle_path
+    ms = md.type_moveset(cb, type_name.lower())
+    if not ms:
+        return []
+    usage = dict(md.type_usage(cb, type_name.lower()))
+    cands, have_names = _rank_teammates(ms, usage, have, want_role, n)
     if not cands:
         return []
-    cands.sort(key=lambda c: (c[2], c[1]) if have_names else (c[1], 0.0), reverse=True)
-    cands = cands[:n]
-
     Typ = type_name.capitalize()
     if have_names:
         head = (f"Recommended {Typ}-type teammates in Gen 9 Monotype to pair with "
@@ -397,20 +433,31 @@ def recommend_teammates(type_name: str, have: list[str] | None = None,
     else:
         head = (f"Recommended {Typ}-type teammates in Gen 9 Monotype — the staple "
                 f"partners on {Typ} teams, ranked by usage:")
-    lines = [head]
-    for mon, u, coocc, roles in cands:
-        tag = f" — {', '.join(roles)}" if roles else ""
-        extra = f", {coocc:.0f}% together" if have_names and coocc else ""
-        lines.append(f"- {mon} ({u:.0f}% usage{extra}){tag}")
-    if have_names:
-        core_roles = set().union(*(set(_team_roles(movesets[h])) for h in have_names))
-        key_roles = ["hazard setter", "hazard control", "speed control", "wall / staller", "pivot"]
-        missing = [r for r in key_roles if r not in core_roles]
-        if missing:
-            lines.append("Roles your current core lacks: " + ", ".join(missing)
-                         + " — prioritize teammates that provide them.")
+    lines = [head] + _teammate_lines(cands, have_names, ms)
     return [_passage("tool#recommend_teammates", f"{Typ} monotype teammates", "\n".join(lines))] \
         + _corpus_docs([f"gen9monotype_usage#{Typ}"])
+
+
+def recommend_ou_teammates(have: list[str] | None = None,
+                           want_role: str | None = None, n: int = 6) -> list[dict]:
+    """Grounded Gen 9 OU teammate suggestions (usage, or co-occurrence with a given
+    core), each tagged with its role, plus the roles the core is missing."""
+    have = have or []
+    ms = _ou_movesets("gen9ou")
+    if not ms:
+        return []
+    usage = dict(_ou_usage("gen9ou"))
+    cands, have_names = _rank_teammates(ms, usage, have, want_role, n)
+    if not cands:
+        return []
+    if have_names:
+        head = (f"Recommended Gen 9 OU teammates to pair with {', '.join(have_names)}, "
+                f"ranked by how often they are used together (Smogon teammate stats):")
+    else:
+        head = "Recommended Gen 9 OU teammates — the staple partners, ranked by usage:"
+    lines = [head] + _teammate_lines(cands, have_names, ms)
+    return [_passage("tool#recommend_teammates", "Gen 9 OU teammates", "\n".join(lines))] \
+        + _corpus_docs(["gen9ou_chaos#usage_rankings"])
 
 
 # Stage 2 team generator: assemble a legal team, gated by the Showdown validator.
@@ -447,8 +494,39 @@ def _archetype(name):
     return _ARCHETYPES.get((name or "balance").lower(), _ARCHETYPES["balance"])
 
 
-def _mon_set_lines(mon: str, entry: dict) -> str:
-    """A Showdown-paste set from the mon's most-used moves / item / ability / spread."""
+@lru_cache(maxsize=4)
+def _ou_movesets(fmt="gen9ou"):
+    """gen9ou chaos movesets with Showdown ids rendered to display names, so role
+    inference and set-building (written for the display-name monotype data) work
+    unchanged. Teammate/check names and spreads are already display form."""
+    d = _data()
+    mbi, ibi, abi = d["moves_by_id"], d["items_by_id"], d["abilities_by_id"]
+
+    def disp(name, table):
+        return table.get(_toid(name), name.replace("-", " ").title())
+
+    out = {}
+    for mon, s in ou.movesets(settings.crystal_battle_path, fmt).items():
+        out[mon] = {
+            "abilities": [(disp(n, abi), p) for n, p in s["abilities"]],
+            "items": [(disp(n, ibi), p) for n, p in s["items"]],
+            "moves": [(disp(n, mbi), p) for n, p in s["moves"]],
+            "spreads": s["spreads"],
+            "tera": [(t.capitalize(), p) for t, p in s["tera"]],
+            "teammates": s["teammates"],
+            "checks": s["checks"],
+            "raw": s["raw"],
+        }
+    return out
+
+
+def _ou_usage(fmt="gen9ou"):
+    return ou.usage(settings.crystal_battle_path, fmt)
+
+
+def _mon_set_lines(mon: str, entry: dict, tera: bool = False) -> str:
+    """A Showdown-paste set from the mon's most-used moves / item / ability / spread
+    (plus Tera type, for formats that allow Terastallization)."""
     moves = [m for m, _ in entry.get("moves", [])[:4]]
     item = entry["items"][0][0] if entry.get("items") else None
     abil = entry["abilities"][0][0] if entry.get("abilities") else None
@@ -463,23 +541,25 @@ def _mon_set_lines(mon: str, entry: dict) -> str:
         if es:
             lines.append(f"EVs: {es}")
         lines.append(f"{nat} Nature")
+    if tera and entry.get("tera"):
+        lines.append(f"Tera Type: {entry['tera'][0][0]}")
     lines += [f"- {mv}" for mv in moves]
     return "\n".join(lines)
 
 
-def _validate_team(paste: str, type_name: str) -> tuple[bool, bool, list[str]]:
-    """Run the team through Showdown's TeamValidator for gen9monotype.
+def _validate_team(paste: str, fmt: str = "gen9monotype", name: str = "Team") -> tuple[bool, bool, list[str]]:
+    """Run the team through Showdown's TeamValidator for the given format.
     Returns (validated, clean, problems); validated=False when node/validator is
     unavailable (the tool then degrades to unvalidated sets rather than blocking)."""
     if not _NODE or not os.path.exists(_VALIDATE_JS):
         return False, True, []
-    body = f"=== [gen9monotype] {type_name.capitalize()} ===\n\n{paste}\n"
+    body = f"=== [{fmt}] {name} ===\n\n{paste}\n"
     path = None
     try:
         with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
             f.write(body)
             path = f.name
-        r = subprocess.run([_NODE, _VALIDATE_JS, path, "gen9monotype"],
+        r = subprocess.run([_NODE, _VALIDATE_JS, path, fmt],
                            capture_output=True, text=True, timeout=60)
     except Exception:
         return False, True, []
@@ -494,20 +574,10 @@ def _validate_team(paste: str, type_name: str) -> tuple[bool, bool, list[str]]:
     return True, clean, problems
 
 
-def generate_team(type_name: str, have: list[str] | None = None,
-                  archetype: str = "balance") -> list[dict]:
-    """Build a full 6-mon Gen 9 Monotype team of one type and archetype: seed with any
-    given core, fill toward the archetype's role profile + teammate co-occurrence +
-    usage, render sets from the moveset stats, and gate the result through the Showdown
-    validator (dropping and refilling any Pokemon it flags)."""
-    have = have or []
-    arch = _archetype(archetype)
-    want = arch["build"]
-    cb = settings.crystal_battle_path
-    ms = md.type_moveset(cb, type_name.lower())
-    if not ms:
-        return []
-    usage = dict(md.type_usage(cb, type_name.lower()))
+def _assemble_team(ms, usage, have, want, fmt, tera):
+    """Shared role-aware assembly + set-building + validate + critique-refine loop
+    (format-agnostic: monotype or gen9ou). Returns (team, paste, validated, clean,
+    problems)."""
     pool = sorted(ms, key=lambda m: usage.get(m, 0), reverse=True)
 
     def roles_of(t):
@@ -531,10 +601,10 @@ def generate_team(type_name: str, have: list[str] | None = None,
         return team
 
     team = fill([m for m in ms if m.lower() in {h.lower() for h in have}], set())
-    banned, validated, clean, problems, paste = set(), False, True, [], ""
+    banned, paste = set(), ""
     for _ in range(4):
-        paste = "\n\n".join(_mon_set_lines(m, ms[m]) for m in team)
-        validated, clean, problems = _validate_team(paste, type_name)
+        paste = "\n\n".join(_mon_set_lines(m, ms[m], tera) for m in team)
+        _, clean, problems = _validate_team(paste, fmt)
         if clean:
             break
         flagged = {m for m in team for p in problems if m.lower() in p.lower()}
@@ -544,8 +614,7 @@ def generate_team(type_name: str, have: list[str] | None = None,
         team = fill([m for m in team if m not in flagged], banned)
 
     # critique-driven refinement (the loop): if a key role is still missing AND the
-    # type has a mon that supplies it, swap out a redundant member and re-validate;
-    # stop when nothing is missing or the gap has no meta answer.
+    # meta has a mon that supplies it, swap out a redundant member and re-validate.
     for _ in range(2):
         missing = [r for r in want if r not in roles_of(team)]
         if not missing:
@@ -556,26 +625,67 @@ def generate_team(type_name: str, have: list[str] | None = None,
         if not filler or not drop:
             break
         cand = [m for m in team if m != drop] + [filler]
-        cpaste = "\n\n".join(_mon_set_lines(m, ms[m]) for m in cand)
-        _, cclean, _ = _validate_team(cpaste, type_name)
+        cpaste = "\n\n".join(_mon_set_lines(m, ms[m], tera) for m in cand)
+        _, cclean, _ = _validate_team(cpaste, fmt)
         if cclean:
             team, paste = cand, cpaste
         else:
             banned.add(filler)
 
-    validated, clean, problems = _validate_team(paste, type_name)
+    validated, clean, problems = _validate_team(paste, fmt)
+    return team, paste, validated, clean, problems
+
+
+def _legality_line(validated, clean, problems, fmt):
+    if validated and clean:
+        return f"Legality: passes the {fmt} team validator."
+    if validated:
+        return "Note: the validator flagged " + "; ".join(problems[:3]) + "."
+    return "Note: sets are from usage stats (team validator was unavailable)."
+
+
+def generate_team(type_name: str, have: list[str] | None = None,
+                  archetype: str = "balance") -> list[dict]:
+    """Build a full 6-mon Gen 9 Monotype team of one type and archetype, gated by the
+    Showdown validator."""
+    arch = _archetype(archetype)
+    cb = settings.crystal_battle_path
+    ms = md.type_moveset(cb, type_name.lower())
+    if not ms:
+        return []
+    usage = dict(md.type_usage(cb, type_name.lower()))
+    team, paste, validated, clean, problems = _assemble_team(
+        ms, usage, have or [], arch["build"], "gen9monotype", tera=False)
     Typ = type_name.capitalize()
     label = "" if archetype.lower() == "balance" else f" {archetype.lower()}"
     parts = [f"A Gen 9 Monotype{label} {Typ} team, built from usage and teammate stats:", "", paste, ""]
     parts += _analysis_lines(type_name, team, ms, arch)
-    if validated and clean:
-        parts.append("Legality: passes the gen9monotype team validator.")
-    elif validated:
-        parts.append("Note: the validator flagged " + "; ".join(problems[:3]) + ".")
-    else:
-        parts.append("Note: sets are from usage stats (team validator was unavailable).")
+    parts.append(_legality_line(validated, clean, problems, "gen9monotype"))
     return [_passage("tool#generate_team", f"{Typ} monotype team", "\n".join(parts))] \
         + _corpus_docs([f"gen9monotype_usage#{Typ}"])
+
+
+def generate_ou_team(have: list[str] | None = None, archetype: str = "balance") -> list[dict]:
+    """Build a full 6-mon Gen 9 OU team of an archetype from usage + teammate stats
+    (Tera included), gated by the Showdown validator. Stage A output is the team plus a
+    role-coverage note; the full OU critic (type coverage + threats) is analyze_ou_team."""
+    arch = _archetype(archetype)
+    ms = _ou_movesets("gen9ou")
+    if not ms:
+        return []
+    usage = dict(_ou_usage("gen9ou"))
+    team, paste, validated, clean, problems = _assemble_team(
+        ms, usage, have or [], arch["build"], "gen9ou", tera=True)
+    label = "" if archetype.lower() == "balance" else f" {archetype.lower()}"
+    covered = set().union(*(set(_set_roles(ms[m])) for m in team)) if team else set()
+    missing = [r for r in arch["expect"] if r not in covered]
+    parts = [f"A Gen 9 OU{label} team, built from usage and teammate stats:", "", paste, "",
+             "Roles covered: " + (", ".join(sorted(covered)) or "none") + "."]
+    if missing:
+        parts.append("Missing roles for this archetype: " + ", ".join(missing) + ".")
+    parts.append(_legality_line(validated, clean, problems, "gen9ou"))
+    return [_passage("tool#generate_team", "Gen 9 OU team", "\n".join(parts))] \
+        + _corpus_docs(["gen9ou_chaos#usage_rankings"])
 
 
 def _least_valuable(team, ms, usage):
