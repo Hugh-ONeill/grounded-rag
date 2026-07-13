@@ -494,3 +494,7 @@
 - question: "Recommend OU teammates for Kingambit."
   expect_source: "tool#recommend_teammates"
   expect_keywords: ["great tusk"]
+
+- question: "Analyze my OU team: Great Tusk, Kingambit, Gholdengo, Dragapult, Corviknight, Iron Valiant."
+  expect_source: "tool#analyze_team"
+  expect_keywords: ["speed control"]

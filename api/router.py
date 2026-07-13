@@ -350,14 +350,14 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
             if p:
                 return p
 
-    # critique an existing monotype team: "analyze my Steel team: Heatran, Gholdengo..."
-    # Needs the members named; infers the shared type from them when not stated.
+    # critique a team: monotype when the members share a type (or a monotype signal),
+    # else gen9OU. Needs the members named; infers the shared type from them.
     if _ANALYZE.search(question) and len(team_mons) >= 2:
-        typ = types[0] if types else tools.team_type(team_mons)
-        if typ:
-            p = tools.analyze_team(typ, team_mons, archetype=arch)
-            if p:
-                return p
+        typ = types[0] if (mono_intent and types) else tools.team_type(team_mons)
+        p = (tools.analyze_team(typ, team_mons, archetype=arch) if typ
+             else tools.analyze_ou_team(team_mons, archetype=arch))
+        if p:
+            return p
 
     # "build me a team": monotype when the question signals a single type, else default
     # to gen9OU (the format most people mean). Checked before the teammate recommender.

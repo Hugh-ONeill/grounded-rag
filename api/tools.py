@@ -673,16 +673,12 @@ def generate_ou_team(have: list[str] | None = None, archetype: str = "balance") 
     ms = _ou_movesets("gen9ou")
     if not ms:
         return []
-    usage = dict(_ou_usage("gen9ou"))
+    usage_list = _ou_usage("gen9ou")
     team, paste, validated, clean, problems = _assemble_team(
-        ms, usage, have or [], arch["build"], "gen9ou", tera=True)
+        ms, dict(usage_list), have or [], arch["build"], "gen9ou", tera=True)
     label = "" if archetype.lower() == "balance" else f" {archetype.lower()}"
-    covered = set().union(*(set(_set_roles(ms[m])) for m in team)) if team else set()
-    missing = [r for r in arch["expect"] if r not in covered]
-    parts = [f"A Gen 9 OU{label} team, built from usage and teammate stats:", "", paste, "",
-             "Roles covered: " + (", ".join(sorted(covered)) or "none") + "."]
-    if missing:
-        parts.append("Missing roles for this archetype: " + ", ".join(missing) + ".")
+    parts = [f"A Gen 9 OU{label} team, built from usage and teammate stats:", "", paste, ""]
+    parts += _ou_analysis_lines(team, ms, usage_list, arch)
     parts.append(_legality_line(validated, clean, problems, "gen9ou"))
     return [_passage("tool#generate_team", "Gen 9 OU team", "\n".join(parts))] \
         + _corpus_docs(["gen9ou_chaos#usage_rankings"])
@@ -752,6 +748,97 @@ def analyze_team(type_name: str, mons: list[str], archetype: str = "balance") ->
         + _analysis_lines(type_name, team, ms, arch)
     return [_passage("tool#analyze_team", f"{Typ} monotype team analysis", "\n".join(lines))] \
         + _corpus_docs([f"gen9monotype_matchup#{Typ}"])
+
+
+# ---- gen9OU critic (Stage B): type-weakness coverage + threat answers ----
+
+def _type_weaknesses(team):
+    """For each attacking type, count team members weak (>1x) vs those that resist
+    (<1x, incl. immune). A hole is a type ~half the team is weak to with few answers."""
+    d = _data()
+    chart, mons = d["chart"], d["mons"]
+    tt = {m: mons.get(m.lower(), {}).get("types", []) for m in team}
+    holes = []
+    for att in d["types"]:
+        weak = resist = 0
+        for m in team:
+            mult = 1.0
+            for t in tt[m]:
+                mult *= chart.get((att, t), 1.0)
+            if mult > 1:
+                weak += 1
+            elif mult < 1:
+                resist += 1
+        if weak >= 3 or (weak >= 2 and resist == 0):
+            holes.append((att, weak, resist))
+    holes.sort(key=lambda x: (-x[1], x[2]))
+    return holes
+
+
+def _ou_threats(ms, usage_list, team, n=8):
+    """Top-usage OU mons not on the team that the team lacks an answer to (no listed
+    check on the team AND no member resists the threat's STAB)."""
+    d = _data()
+    chart, mons = d["chart"], d["mons"]
+    team_set = set(team)
+    tt = {m: mons.get(m.lower(), {}).get("types", []) for m in team}
+    threats = [m for m, _ in usage_list[:24] if m in ms and m not in team_set][:n]
+    uncovered = []
+    for threat in threats:
+        if set(ms[threat]["checks"]) & team_set:
+            continue
+        stab = mons.get(threat.lower(), {}).get("types", [])
+        answered = False
+        for m in team:
+            for st in stab:
+                mult = 1.0
+                for t in tt[m]:
+                    mult *= chart.get((st, t), 1.0)
+                if mult < 1:
+                    answered = True
+                    break
+            if answered:
+                break
+        if not answered:
+            uncovered.append(threat)
+    return uncovered
+
+
+def _ou_analysis_lines(team, ms, usage_list, arch):
+    covered = set().union(*(set(_set_roles(ms[m])) for m in team)) if team else set()
+    missing = [r for r in arch["expect"] if r not in covered]
+    lines = ["Roles covered: " + (", ".join(sorted(covered)) or "none") + "."]
+    if missing:
+        lines.append("Missing roles for this archetype: " + ", ".join(missing) + ".")
+    if arch["speed"] and "speed control" not in covered:
+        lines.append("No dedicated speed control (Choice Scarf / Tailwind) — watch for faster teams.")
+    holes = _type_weaknesses(team)
+    if holes:
+        lines.append("Shared type weaknesses (members weak / that resist): "
+                     + "; ".join(f"{a} — {w} weak, {r} resist" for a, w, r in holes[:4]) + ".")
+    uncovered = _ou_threats(ms, usage_list, team)
+    if uncovered:
+        lines.append("Top OU threats the team lacks a solid answer to: "
+                     + ", ".join(uncovered) + ".")
+    return lines
+
+
+def analyze_ou_team(mons: list[str], archetype: str = "balance") -> list[dict]:
+    """Critique a Gen 9 OU team: role coverage, shared type weaknesses (coverage
+    matrix), and which top-usage threats it has no answer to."""
+    arch = _archetype(archetype)
+    ms = _ou_movesets("gen9ou")
+    if not ms:
+        return []
+    usage_list = _ou_usage("gen9ou")
+    keymap = {k.lower(): k for k in ms}
+    team = [keymap[m.lower()] for m in mons if m.lower() in keymap]
+    if not team:
+        return []
+    lines = [f"Analysis of a Gen 9 OU team ({', '.join(team)}):"] \
+        + _ou_analysis_lines(team, ms, usage_list, arch)
+    return [_passage("tool#analyze_team", "Gen 9 OU team analysis", "\n".join(lines))] \
+        + _corpus_docs(["gen9ou_chaos#usage_rankings"])
 
 
 def _corpus_docs(sources: list[str]) -> list[dict]:
