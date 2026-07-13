@@ -881,8 +881,102 @@ def _ou_threats(ms, usage_list, team, n=8):
     return uncovered
 
 
-def _ou_analysis_lines(team, ms, usage_list, arch):
-    covered = set().union(*(set(_set_roles(ms[m])) for m in team)) if team else set()
+# ---- calc-grounded threats: prove a hole with the engine, not just type math ----
+
+_WALL_ROLES = {"wall / staller", "cleric"}
+
+
+def _is_defensive(entry: dict) -> bool:
+    """Whether a member is built to take hits: a genuine wall/cleric role, or a
+    defensive item (Leftovers / Boots / Assault Vest / Eviolite / Rocky Helmet)."""
+    item = entry["items"][0][0].lower() if entry.get("items") else ""
+    return bool(set(_set_roles(entry)) & _WALL_ROLES) or item in _DEF_ITEMS
+
+
+def _off_mods(entry: dict, move_cls: str) -> dict:
+    """Offensive investment for a threat's move: 252 EVs + a boosting nature in the
+    matching attack stat, plus the item it actually runs most."""
+    stat = "Attack" if move_cls == "physical" else "Special Attack"
+    lowered = "Special Attack" if move_cls == "physical" else "Attack"
+    item = entry["items"][0][0] if entry.get("items") else None
+    return {"evs": {stat: 252}, "nature": (stat, lowered), "item": item}
+
+
+def _def_mods(entry: dict, move_cls: str) -> dict:
+    """Defensive assumption for a member facing a move of the given class: a dedicated
+    wall spread (252 HP + 252 in the relevant defense) only if the mon is actually
+    built to take hits, else 0 EVs. Its real item is always applied."""
+    item = entry["items"][0][0] if entry.get("items") else None
+    dstat = "Defense" if move_cls == "physical" else "Special Defense"
+    if _is_defensive(entry):
+        return {"evs": {"HP": 252, dstat: 252}, "nature": (dstat, "Attack"), "item": item}
+    return {"item": item} if item else {}
+
+
+def _threat_worst_hit(threat_mon, threat_entry, member_mon, member_entry, d):
+    """The threat's hardest actual damaging move into this member, as (move, lo%, hi%);
+    None if the threat has no damaging move or the engine is unavailable."""
+    best = None
+    seen = 0
+    for mv, _ in threat_entry.get("moves", []):
+        me = d["moves"].get(mv.lower())
+        if not me or me[2] not in ("physical", "special"):
+            continue
+        seen += 1
+        lo, hi, hp = _calc_rolls(threat_mon, me[0], member_mon,
+                                 _off_mods(threat_entry, me[2]),
+                                 _def_mods(member_entry, me[2]), "none")
+        if lo is None or not hp:
+            continue
+        lop, hip = 100 * lo / hp, 100 * hi / hp
+        if best is None or hip > best[2]:
+            best = (me[0], lop, hip)
+        if seen >= 3:
+            break
+    return best
+
+
+def _calc_threats(ms, usage_list, team, member_entries, n_scan=16, n_out=5):
+    """Top-usage OU mons whose hardest move 2HKOs even the team's sturdiest answer,
+    proven by the engine. Returns [(threat, best_answer, move, lo%, hi%)] worst-first,
+    or None if the engine can't be loaded (caller falls back to the type heuristic)."""
+    try:
+        import poke_engine  # noqa: F401
+    except ImportError:
+        return None
+    d = _data()
+    mons, team_set = d["mons"], set(team)
+    scan = [m for m, _ in usage_list[:n_scan] if m in ms and m not in team_set]
+    found = []
+    for threat in scan:
+        ta = mons.get(threat.lower())
+        if not ta:
+            continue
+        answer = None   # the member taking the least (lowest max roll)
+        for mem in team:
+            mb = mons.get(mem.lower())
+            if not mb or mem not in member_entries:
+                continue
+            hit = _threat_worst_hit(ta, ms[threat], mb, member_entries[mem], d)
+            if hit and (answer is None or hit[2] < answer[3]):
+                answer = (mem, hit[0], hit[1], hit[2])
+        if answer and answer[3] >= 50.0:   # even the sturdiest is (at best) 2HKO'd
+            found.append((threat, *answer))
+    found.sort(key=lambda x: -x[4])
+    return found[:n_out]
+
+
+def _threat_verdict(lo, hi):
+    if lo >= 100:
+        return "OHKOs"
+    if lo >= 50:
+        return "2HKOs"
+    return "can 2HKO"   # hi >= 50 > lo
+
+
+def _ou_analysis_lines(team, ms, usage_list, arch, member_entries=None):
+    entries = member_entries or ms
+    covered = set().union(*(set(_set_roles(entries[m])) for m in team if m in entries)) if team else set()
     missing = [r for r in arch["expect"] if r not in covered]
     lines = ["Roles covered: " + (", ".join(sorted(covered)) or "none") + "."]
     if missing:
@@ -893,10 +987,17 @@ def _ou_analysis_lines(team, ms, usage_list, arch):
     if holes:
         lines.append("Shared type weaknesses (members weak / that resist): "
                      + "; ".join(f"{a} — {w} weak, {r} resist" for a, w, r in holes[:4]) + ".")
-    uncovered = _ou_threats(ms, usage_list, team)
-    if uncovered:
-        lines.append("Top OU threats the team lacks a solid answer to: "
-                     + ", ".join(uncovered) + ".")
+    calc = _calc_threats(ms, usage_list, team, entries)
+    if calc is not None:
+        if calc:
+            lines.append("Hardest hitters your team can't switch into (engine-checked vs your sturdiest answer): "
+                + "; ".join(f"{t}'s {mv} {_threat_verdict(lo, hi)} {mem} ({hi:.0f}% max roll)"
+                            for t, mem, mv, lo, hi in calc) + ".")
+    else:
+        uncovered = _ou_threats(ms, usage_list, team)
+        if uncovered:
+            lines.append("Top OU threats the team lacks a solid answer to: "
+                         + ", ".join(uncovered) + ".")
     return lines
 
 
@@ -992,21 +1093,12 @@ def analyze_paste(src, archetype: str = "balance") -> list[dict]:
         # the matchup weakness comes from the type chart, not the sets
         lines = [head] + _analysis_lines(typ, team, entries, arch)
         return [_passage("tool#analyze_team", "Team analysis (from paste)", "\n".join(lines))]
-    covered = set().union(*(set(_set_roles(entries[m])) for m in team))
-    missing = [r for r in arch["expect"] if r not in covered]
-    holes = _type_weaknesses(team)
-    uncovered = _ou_threats(_ou_movesets("gen9ou"), _ou_usage("gen9ou"), team)
-    lines = [f"Analysis of your team ({', '.join(team)}), from its actual sets:",
-             "Roles covered: " + (", ".join(sorted(covered)) or "none") + "."]
-    if missing:
-        lines.append(f"Missing roles for a {archetype.lower()} team: " + ", ".join(missing) + ".")
-    if arch["speed"] and "speed control" not in covered:
-        lines.append("No dedicated speed control (Choice Scarf / Tailwind) — watch for faster teams.")
-    if holes:
-        lines.append("Type weaknesses (members weak / that resist): "
-                     + "; ".join(f"{a} — {w} weak, {r} resist" for a, w, r in holes[:4]) + ".")
-    if uncovered:
-        lines.append("Top OU threats the team lacks a solid answer to: " + ", ".join(uncovered) + ".")
+    # OU team: reuse the OU critic, but feed it the paste's ACTUAL sets as the
+    # member entries (role coverage + the calc-grounded threat pass read the real
+    # moves/item), while threats are still drawn from the meta usage pool.
+    ms, usage_list = _ou_movesets("gen9ou"), _ou_usage("gen9ou")
+    head = f"Analysis of your team ({', '.join(team)}), from its actual sets:"
+    lines = [head] + _ou_analysis_lines(team, ms, usage_list, arch, member_entries=entries)
     return [_passage("tool#analyze_team", "Team analysis (from paste)", "\n".join(lines))]
 
 
