@@ -420,6 +420,10 @@
   expect_source: "tool#speed_tiers"
   expect_keywords: ["deoxys", "scarf"]
 
+- question: "What does my team of Kingambit, Gholdengo, Great Tusk, Landorus-Therian, Dragapult, and Slowking-Galar outspeed?"
+  expect_source: "tool#speed_tiers"
+  expect_keywords: []
+
 # ---- Monotype (gen9monotype) ----
 - question: "Which Pokémon are most used on a Steel team in Gen 9 Monotype?"
   expect_source: "gen9monotype_usage#Steel"

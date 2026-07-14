@@ -29,6 +29,16 @@ _SPEED_VS = re.compile(
     r"|higher speed|more speed|speed advantage|compare .{0,24}speed", re.I)
 _SUPERLATIVE = re.compile(
     r"\b(fastest|slowest|highest|lowest|best|most|bulkiest|quickest|maximum|largest|greatest)\b", re.I)
+# team-level speed profile. An explicit "speed chart/tiers" phrase is enough on its
+# own (fires at >=2 named mons); the looser "team ... outspeed" form needs >=3 named
+# mons so it can't steal a 2-mon pairwise compare ("does my team's X outspeed Y").
+_SPEED_CHART = re.compile(
+    r"\bspeed (?:chart|tiers?|control|breakdown|profile|spread)\b|team'?s? speed"
+    r"|speed of (?:my|the|this|our) team"
+    r"|how (?:fast|slow|quick)\b", re.I)
+_TEAM_OUTSPEED = re.compile(
+    r"\bteam\b.*\b(?:outspeeds?|faster|slower|outpaces?|outruns?)\b"
+    r"|\b(?:outspeeds?|faster|slower|outpaces?|outruns?)\b.*\bteam\b", re.I)
 # monotype intent: the word "monotype" or a "mono-<type>" phrasing. Superlative
 # stat questions in this format must rank the monotype meta, not the whole dex.
 _MONOTYPE = re.compile(
@@ -273,11 +283,20 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
     pp = re.search(r"https?://pokepast\.es/\w+", question, re.I)
     if pp:
         url = pp.group(0)
-        if _BUILD_TEAM.search(question):
+        if _SPEED_CHART.search(question) or _TEAM_OUTSPEED.search(question):
+            p = tools.paste_speed_chart(url)
+        elif _BUILD_TEAM.search(question):
             p = tools.generate_ou_team(have=tools.paste_mons(url), archetype=arch,
                                        variant=_variant_of(question))
         else:
             p = tools.analyze_paste(url, archetype=arch)
+        if p:
+            return p
+
+    # "what does my team outspeed" / "speed chart for <team>" — team speed profile
+    if (_SPEED_CHART.search(question) and len(team_mons) >= 2) or \
+       (_TEAM_OUTSPEED.search(question) and len(team_mons) >= 3):
+        p = tools.team_speed_chart(team_mons)
         if p:
             return p
 

@@ -289,6 +289,106 @@ def speed_tiers(name: str, fmt: str = "gen9ou") -> list[dict]:
         + _corpus_docs([f"pokedex#{mon['name']}", f"{fmt}_chaos#usage_rankings"])
 
 
+_PRIORITY_MOVES = {"sucker punch", "aqua jet", "bullet punch", "mach punch", "ice shard",
+                   "shadow sneak", "extreme speed", "jet punch", "grassy glide", "quick attack",
+                   "vacuum wave", "water shuriken", "first impression", "accelerock",
+                   "thunderclap", "fake out", "ice shard", "feint"}
+_TR_MOVES = {"trick room"}
+_TW_MOVES = {"tailwind"}
+
+
+def team_speed_chart(mons: list[str], fmt: str = "gen9ou",
+                     entries: dict | None = None) -> list[dict]:
+    """A team's speed profile against the meta: each member's base Speed, how much of
+    the usage top 30 the team outspeeds, which threats outrun the whole team (and
+    whether a Choice Scarf reclaims them), and the team's speed control. Uses the
+    paste's real sets when `entries` is given, else each mon's most-used set."""
+    d = _data()
+    md_ = d["mons"]
+    src = entries if entries is not None else _ou_movesets(fmt)
+    team = []
+    for m in mons:
+        c = md_.get(m.lower(), {}).get("name")
+        if c and c not in team:
+            team.append(c)
+    if len(team) < 2:
+        return []
+    meta = _usage_rankings(fmt)
+    if not meta:
+        return []
+
+    def kit(name):
+        e = (entries or {}).get(name) or src.get(name)
+        moves = {mv.lower() for mv, _ in e.get("moves", [])[:4]} if e else set()
+        item = e["items"][0][0].lower() if e and e.get("items") else ""
+        return moves, item
+
+    members = []
+    for name in team:
+        moves, item = kit(name)
+        members.append({"name": name, "base": md_[name.lower()]["stats"].get("Speed", 0),
+                        "scarf": item == "choice scarf",
+                        "priority": sorted(moves & _PRIORITY_MOVES),
+                        "tw": bool(moves & _TW_MOVES), "tr": bool(moves & _TR_MOVES)})
+    members.sort(key=lambda x: (-x["base"], x["name"]))
+    team_max = members[0]["base"]
+    tset = set(team)
+    meta_rows = sorted(((n, md_[n.lower()]["stats"].get("Speed", 0))
+                        for n, _ in meta if n.lower() in md_ and n not in tset),
+                       key=lambda r: -r[1])
+    total = len(meta_rows)
+    over = [(n, sp) for n, sp in meta_rows if sp > team_max]
+    outsped = sum(1 for _, sp in meta_rows if sp < team_max)
+
+    def tag(m):
+        t = (["Scarf"] if m["scarf"] else []) + (["priority"] if m["priority"] else [])
+        return f" [{', '.join(t)}]" if t else ""
+
+    lines = [f"Speed chart for your team ({', '.join(team)}), base Speed at equal max "
+             f"investment, against the {total} most-used {fmt} Pokemon not on your team:"]
+    lines.append("Your Speed, fastest first: "
+                 + ", ".join(f"{m['name']} {m['base']}{tag(m)}" for m in members) + ".")
+    lines.append(f"Your fastest, {members[0]['name']} (base {team_max}), outspeeds "
+                 f"{outsped} of those {total}; slowest is {members[-1]['name']} "
+                 f"(base {members[-1]['base']}).")
+    scarfers = [m for m in members if m["scarf"]]
+    if over:
+        lines.append("Faster than your whole team unboosted: "
+                     + ", ".join(f"{n} ({sp})" for n, sp in over[:10]) + ".")
+        if scarfers:
+            b = max(m["base"] for m in scarfers)
+            reach = (1.5 * (2 * b + 99) - 99) / 2   # neutral-max base a Scarf outspeeds up to
+            sc = max(scarfers, key=lambda m: m["base"])["name"]
+            caught = [f"{n} ({sp})" for n, sp in over if sp < reach]
+            still = [f"{n} ({sp})" for n, sp in over if sp >= reach]
+            if caught:
+                lines.append(f"With {sc}'s Choice Scarf you reclaim: {', '.join(caught)}.")
+            if still:
+                lines.append(f"Still faster than even your Scarf: {', '.join(still)}.")
+    else:
+        lines.append(f"None of those {total} outspeeds your fastest unboosted.")
+    ctrl = []
+    if scarfers:
+        ctrl.append("Choice Scarf on " + ", ".join(m["name"] for m in scarfers))
+    prio = [m for m in members if m["priority"]]
+    if prio:
+        ctrl.append("priority (" + "; ".join(
+            f"{m['name']}: {', '.join(mv.title() for mv in m['priority'])}" for m in prio) + ")")
+    if any(m["tw"] for m in members):
+        ctrl.append("Tailwind from " + ", ".join(m["name"] for m in members if m["tw"]))
+    if any(m["tr"] for m in members):
+        ctrl.append("Trick Room from " + ", ".join(m["name"] for m in members if m["tr"]))
+    lines.append("Speed control: " + ("; ".join(ctrl) if ctrl
+                 else "none — no Choice Scarf, priority, Tailwind, or Trick Room, so anything "
+                      "above your fastest moves first") + ".")
+    if any(m["tr"] for m in members):
+        lines.append("Under Trick Room the slowest mons move first, inverting these tiers.")
+    lines.append("Assumes equal max Speed investment; natures, Speed EVs, and boosts shift "
+                 "the exact order.")
+    return [_passage("tool#speed_tiers", "speed chart for your team", "\n".join(lines))] \
+        + _corpus_docs([f"{fmt}_chaos#usage_rankings"])
+
+
 def stat_query(stat: str, type_filter: str | None = None, n: int = 10,
                lowest: bool = False) -> list[dict]:
     """Top-N Pokemon by a base stat, optionally filtered to one type."""
@@ -1077,6 +1177,12 @@ def _paste_team(src):
 def paste_mons(src):
     """The canonical Pokemon names in a pokepaste URL or raw paste (for build-around)."""
     return _paste_team(src)[0]
+
+
+def paste_speed_chart(src) -> list[dict]:
+    """Speed profile of a team behind a pokepaste URL or raw paste, from its real sets."""
+    team, entries = _paste_team(src)
+    return team_speed_chart(team, entries=entries) if len(team) >= 2 else []
 
 
 def analyze_paste(src, archetype: str = "balance") -> list[dict]:
