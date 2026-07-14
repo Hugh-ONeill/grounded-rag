@@ -113,6 +113,11 @@
   expect_source: ["gen9ou_chaos#Kingambit", "smogon#Kingambit"]
   expect_keywords: []
 
+# the composite counters tool (statistical C&C + type-based answers + Smogon prose)
+- question: "How do I beat Gholdengo in Gen 9 OU?"
+  expect_source: "tool#counters"
+  expect_keywords: []
+
 # ---- No-answer (the corpus is Pokemon usage data; these should be refused) ----
 - question: "What is the capital of France?"
   no_answer: true

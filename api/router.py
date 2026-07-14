@@ -57,6 +57,10 @@ _TEAMMATE = re.compile(
 # build-a-team intent: "build me a Steel team", "make a monotype Fairy team"
 _BUILD_TEAM = re.compile(
     r"\b(?:build|make|generate|create|come up with|put together|suggest|give me)\b.{0,40}\bteams?\b", re.I)
+# "what beats/counters X" intent (one identified mon -> composite counters tool)
+_COUNTERS = re.compile(
+    r"\bcounters?\b|\bchecks?\b|\bbeats?\b|good answers? to|answers? to|deal with"
+    r"|how (?:do|can|to)(?: i| you)? (?:beat|handle|stop|check|counter)|switch(?:es)? into", re.I)
 # critique-an-existing-team intent (needs the team's mons named)
 _ANALYZE = re.compile(
     r"\b(?:analy[sz]e|analysis|critique|review|rate|assess|evaluate|feedback on|"
@@ -430,6 +434,14 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
             p = tools.stat_query(stat, type_filter=types[0], lowest=lowest)
             if p:
                 return p
+
+    # "what beats/counters X" for one identified mon: compose the honest full answer
+    # (statistical checks & counters + type-based answers + Smogon prose) rather than
+    # letting a single route win. OU only; monotype falls through to scoped retrieval.
+    if _COUNTERS.search(question) and len(mons) == 1 and not (mono_intent and types):
+        p = tools.counters(mons[0])
+        if p:
+            return p
 
     # "what counters/checks X" is a competitive-usage question: scope it to the
     # usage-stats corpus (the Counter move and X's own biology pages otherwise

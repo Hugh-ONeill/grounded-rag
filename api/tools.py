@@ -1119,6 +1119,54 @@ def analyze_ou_team(mons: list[str], archetype: str = "balance") -> list[dict]:
         + _corpus_docs(["gen9ou_chaos#usage_rankings"])
 
 
+def counters(mon: str, fmt: str = "gen9ou") -> list[dict]:
+    """Composite 'what beats X': merges three honest views instead of picking one —
+    (1) statistical checks & counters from ladder matchup data, (2) type-based answers
+    (X's weaknesses + the common meta STAB carriers), (3) Smogon's written analysis and
+    the raw chaos doc ride along as citable passages."""
+    d = _data()
+    m = d["mons"].get(mon.lower())
+    if not m:
+        return []
+    name, chart = m["name"], d["chart"]
+    lines = [f"What beats {name} in Gen 9 OU — three views:"]
+
+    cc = ou.counters_of(settings.crystal_battle_path, fmt, name)[:6]
+    if cc:
+        lines.append("Statistical checks & counters (ladder matchup data; higher = more "
+                     "reliably beats it): " + ", ".join(f"{n} ({s:.0f}%)" for n, s in cc) + ".")
+
+    weak = [(att, mult) for att in d["types"]
+            if (mult := _type_mult(att, m["types"], chart)) > 1]
+    weak.sort(key=lambda x: -x[1])
+    weak = weak[:6]
+    if weak:
+        usage_list = _ou_usage(fmt)[:40]
+        lines.append(f"{name} is {'/'.join(m['types'])}, weak to "
+                     + ", ".join(t for t, _ in weak) + ".")
+        carriers = []
+        for t, _mult in weak:
+            hits = [n for n, _ in usage_list
+                    if (um := d["mons"].get(n.lower())) and t in um["types"] and n != name][:3]
+            if hits:
+                carriers.append(f"{t} — {', '.join(hits)}")
+        if carriers:
+            lines.append("Common meta carriers of those STABs: " + "; ".join(carriers) + ".")
+
+    supports = _corpus_docs([f"smogon#{name} (gen9ou)", f"{fmt}_chaos#{name}"])
+    if any(s["source"].startswith("smogon#") for s in supports):
+        lines.append(f"Smogon's written analysis (cited below) covers the nuance of "
+                     f"actually beating {name}.")
+    return [_passage("tool#counters", f"what beats {name}", "\n".join(lines))] + supports
+
+
+def _type_mult(att: str, defender_types: list[str], chart: dict) -> float:
+    mult = 1.0
+    for t in defender_types:
+        mult *= chart.get((att, t), 1.0)
+    return mult
+
+
 # ---- paste-aware analysis: critique a real team by its ACTUAL sets ----
 
 def _fetch_pokepaste(url):
