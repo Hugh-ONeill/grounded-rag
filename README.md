@@ -239,7 +239,9 @@ unanswerable questions must still be refused. Retrieval and refusal on
 single-turn questions are deterministic; generation and condensation are temperature-sampled,
 so faithfulness moves between 95% and 100% across runs.
 Gold questions live in [eval/questions.yaml](eval/questions.yaml). The harness exits nonzero
-on any miss, and a local pre-push hook runs it before every publish. A companion command,
+on any strict-signal miss (retrieval, follow-up, paraphrase, refusal, or a knowledge leak) and
+on faithfulness below a 95% floor, so a lone temperature-driven faithfulness dip no longer
+blocks an otherwise-clean push; a local pre-push hook runs it before every publish. A companion command,
 `python -m eval.band_report`, prints each gate signal's answerable and no-answer bands with
 margins against the configured thresholds; the bands moved with every corpus growth, and this
 makes the drift visible before the eval breaks.
