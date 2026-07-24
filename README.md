@@ -204,7 +204,7 @@ the moment the corpus grew past what the vector leg could carry alone.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 87 gold questions (77 single-turn answerable,
+Run it yourself: `python -m eval.run_eval`. Over 108 gold questions (97 single-turn answerable,
 covering usage stats, corpus-wide aggregations, stat superlatives, species data, moves,
 abilities, items, learnsets, encyclopedic prose, competitive strategy, in-context comparisons,
 usage-versus-movepool intent,
@@ -212,17 +212,17 @@ and computed answers:
 type matchups with conditional immunities, speed checks, typed stat queries, battle-state-aware
 engine damage calculations, and tiered OHKO and survival escalation searches; 6 conversational
 follow-ups whose referent lives in a prior turn, including one that must route into a tool
-after condensation; 4 deliberately unanswerable, one of them a follow-up; plus 237 frozen
+after condensation; 5 deliberately unanswerable, one of them a follow-up; plus 237 frozen
 paraphrases of the whole set), the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (77/77) |
+| Retrieval hit-rate@k | 100% (97/97) |
 | Follow-up hit-rate (condense → retrieve) | 100% (6/6) |
 | Paraphrase hit-rate | 100% (237/237) |
-| Answer faithfulness | 100% (72/72) |
-| Refusal precision (no-answer) | 100% (4/4: 3 gate, 1 generator) |
-| Ungrounded entity mentions | 0 (over 72 generated answers) |
+| Answer faithfulness | 100% (90/90) |
+| Refusal precision (no-answer) | 100% (5/5: 4 gate, 1 generator) |
+| Ungrounded entity mentions | 0 (over 90 generated answers) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
 faithfulness checks that the generated answer contains expected key terms; refusal precision
