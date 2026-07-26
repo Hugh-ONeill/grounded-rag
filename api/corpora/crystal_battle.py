@@ -228,14 +228,17 @@ def load():
     #    matchups as structured, citable docs (see _monotype_docs).
     yield from _monotype_docs(root)
 
-    # 3) Example team builds
-    for team in (root / "monotype" / "teams").glob("teams_v*.txt"):
-        yield {
-            "source": f"teams/{team.name}",
-            "title": team.stem,
-            "content": team.read_text(encoding="utf-8", errors="ignore"),
-            "metadata": {"kind": "team_paste"},
-        }
+    # Example team builds are deliberately NOT ingested. Each teams_v*.txt holds many
+    # unrelated pastes, so one file became one document and a citation pointed at a
+    # 25-chunk blob rather than a checkable unit, against the rule at the top of this file.
+    # They also actively harmed retrieval: a paste is wall-to-wall Pokemon, item, ability
+    # and move names, so it matched almost any competitive question, and the usage-stats
+    # branch in router.py narrows the pool to this corpus, where 150 paste chunks out of
+    # 933 faced little competition. "What usually happens to a Pokemon holding a Choice
+    # Scarf?" came back as 8/8 team pastes. The refusal gate cannot catch that, because a
+    # paste containing the item genuinely is relevant. Nothing referenced them: no tool, no
+    # gold question, and per-mon monotype set documents already answer how something is
+    # built on a type team. Restore by re-adding a yield here, but split per team.
 
     # TODO (stretch): ingest showdown/replays/*.json as per-turn narrative documents
     #   ("Turn 7: P1 switched Heatran into Earthquake ...") for play-pattern questions.
