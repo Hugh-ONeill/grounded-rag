@@ -14,16 +14,24 @@ from config import settings
 from db import init_schema, clear, insert_chunks
 from embeddings import embed
 from corpora import load_corpus
+from corpora.base import SECTION_BREAK
 
 
 def chunk_text(text: str, size: int, overlap: int):
-    text = text.strip()
-    if len(text) <= size:
-        return [text] if text else []
-    out, start = [], 0
-    while start < len(text):
-        out.append(text[start:start + size])
-        start += size - overlap
+    """Character window + overlap, applied independently to each SECTION_BREAK section.
+    A document with no breaks chunks exactly as before."""
+    out = []
+    for section in text.split(SECTION_BREAK):
+        section = section.strip()
+        if not section:
+            continue
+        if len(section) <= size:
+            out.append(section)
+            continue
+        start = 0
+        while start < len(section):
+            out.append(section[start:start + size])
+            start += size - overlap
     return out
 
 
