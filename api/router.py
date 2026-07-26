@@ -253,9 +253,21 @@ def _find_moves(question: str) -> list[str]:
     return _find_names(question, tools.known_moves())
 
 
-def _find_types(question: str) -> list[str]:
-    """Type names in question order."""
+def _find_types(question: str, mask: list[str] | None = None) -> list[str]:
+    """Type names in question order, ignoring type words that are part of a longer
+    recognized name. "Stealth Rock" is a move, not a mention of the Rock type, but the
+    bare scan saw one: "its Stealth Rock weakness" produced zero Pokemon and exactly one
+    type, fired the matchup tool's single-type fallback, and answered a question about
+    Dragonite with a Rock defensive profile.
+
+    Only multi-token names are masked. Psychic is both a move and a type, so masking every
+    recognized move would strip the type out of "Is Psychic effective against Dark?" and
+    break a real matchup. A single-word name can never be the longer context this guards
+    against, so leaving it visible is both safe and necessary."""
     q = question.lower()
+    for name in sorted(mask or [], key=len, reverse=True):
+        if " " in name or "-" in name:
+            q = q.replace(name.lower(), " " * len(name))
     found = [(m.start(), t) for t in tools.known_types()
              for m in [re.search(rf"\b{t.lower()}\b", q)] if m]
     return [t for _, t in sorted(found)]
@@ -274,7 +286,9 @@ async def route(question: str, corpus: str | None = None) -> list[dict]:
     """Return passages for the question: from a tool when one clearly applies,
     otherwise from hybrid retrieval."""
     mons = _find_mons(question)
-    types = _find_types(question)
+    # mask recognized move and Pokemon names so their type words are not read as bare type
+    # mentions ("Stealth Rock" -> no Rock; "Is Calyrex-Ice weak to Fire?" -> Fire, not Ice)
+    types = _find_types(question, mask=_find_moves(question) + mons)
     # monotype is opt-in: only surface its docs/tools when the question names
     # monotype or a single-type team, else default hard to OU (see retrieve_hybrid).
     mono_intent = bool(_MONOTYPE.search(question) or _TYPE_TEAM.search(question))
