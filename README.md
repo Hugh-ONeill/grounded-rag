@@ -216,6 +216,28 @@ settings at 99.7%, so the leg now asks for exactly `k`. Recall fed into a fixed 
 free, and the binding constraint here was never the candidate pool; it was the reranker's
 judgment at the top of it. Cost on the 24.5k-chunk corpus is 0.8ms against 0.6ms.
 
+**Density beat completeness, and the fix was chunk shape rather than corpus shape.** The
+PokeAPI adapter emits form variants (Gigantamax, Totem, Pikachu's cap and cosplay sets) as
+stubs: same genus, typing, dex number, stats and abilities as the base species, but no
+per-game flavor text. At 264 characters against 1202 for a real page, the stub is denser on
+exactly the identity facts a genus question asks for, so the cross-encoder scored
+`pokedex#Snorlax-Gmax` 0.99876 against `pokedex#Snorlax` 0.99046 and the canonical page fell
+out of the top-8. A new metric (`eval/canonical_preference.py`, deriving its pairs from the
+corpus so it stays honest as the adapter changes) put canonical preference at 7%, 4 of 54.
+The obvious repair, deleting the 84 duplicate stubs, scored well and made the product worse:
+canonical preference became vacuous with no competitors left, while retrieval fell to 99%
+and the Sleeping-Pokemon answer stopped naming Snorlax at all. The stub had been carrying the
+answer; removing it promoted nothing, because the base page loses to a dozen Bulbapedia
+Biology blurbs whether or not the stub exists. Duplication was never the disease. The real
+cause is that chunking is a blind character window, so a 900-character slice buried the genus
+among stats, abilities and dimensions. Adapters can now mark a hard boundary
+(`SECTION_BREAK`) where a chunk must not straddle, and the pokedex identity block gets a
+chunk of its own: 275 characters, almost exactly the 277-character median of the Bulbapedia
+sections it competes against. Canonical preference went to 76%, base pages in the top-8 from
+33 to 49 of 54, and the count of questions where only a stub survives to 0. Documents with no
+boundary marked chunk byte-for-byte as before. Bulbapedia never had this problem because it
+already splits one citable document per `== heading ==`; the pokedex pages were the outlier.
+
 **A gold question can pass for the wrong reason.** `expect_source` matches as a substring so
 that `bulbapedia#Kingambit` covers `bulbapedia#Kingambit (Pokémon) § Biology`, but a bare
 prefix also swallows form variants: `pokedex#Snorlax` was silently satisfied by
