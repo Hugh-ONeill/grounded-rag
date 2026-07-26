@@ -11,6 +11,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 from config import settings
+from .base import SECTION_BREAK
 
 EN = "9"  # local_language_id / language_id for English
 
@@ -121,7 +122,10 @@ def load():
             lines.append(f"Height {int(r['height'])/10:g} m, weight {int(r['weight'])/10:g} kg.")
 
         if is_default and flavor_texts.get(sid):
-            lines.append("Pokedex entries:")
+            # keep the identity block (typing, genus, dex number, stats, abilities) in a
+            # chunk of its own: it is what identity questions match on, and a shared
+            # window with a dozen Pokedex entries dilutes it below far thinner documents
+            lines.append(SECTION_BREAK + "Pokedex entries:")
             lines += [f"- {ver}: {text}" for ver, text in flavor_texts[sid][:12]]
 
         yield {
