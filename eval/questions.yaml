@@ -254,6 +254,19 @@
   expect_source: "tool#type_matchup"
   expect_keywords: ["levitate"]
 
+# Guards the other direction: a question that must NOT reach the matchup tool. Every gold
+# question above names a Pokemon, so they take the mons branches; this one names none, and
+# "Rock" appears only inside the move "Stealth Rock". The bare-single-type fallback used to
+# fire on that fragment and answer a question about Dragonite with a Rock defensive
+# profile, which is worse than a miss because the wrong answer arrives as a citable tool
+# passage. Retrieval ranks smogon#Dragonite (gen9ou) first once routing leaves it alone.
+# Worded to trip exactly one branch: an earlier draft said "relies on Multiscale", which
+# also matched the usage-stats scoping regex and scoped the whole question to
+# crystal_battle team files, so it would have failed for a second unrelated reason.
+- question: "Which OU Pokemon wants Heavy-Duty Boots because of its Stealth Rock weakness and Multiscale ability?"
+  expect_source: "smogon#Dragonite (gen9ou)"
+  expect_keywords: ["dragonite"]
+
 - question: "Does Garchomp's Earthquake OHKO Heatran?"
   expect_source: "tool#damage_calc"
   expect_keywords: ["guaranteed", "ohko"]
