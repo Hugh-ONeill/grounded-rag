@@ -47,6 +47,21 @@ def _parse(text: str) -> dict:
     return out
 
 
+def _base_of(name: str, by_name: dict[str, str]) -> str | None:
+    """Resolve a form name to its base document by trying progressively shorter
+    prefixes, longest first. Suffixes are not single segments: Pikachu-Original-Cap
+    has to reach past 'Pikachu-Original' (not a document) to 'Pikachu'. Species whose
+    name merely contains a hyphen never resolve, which is the point: 'Chi-Yu' would
+    have to find 'Chi', and 'Hakamo-o' would have to find 'Hakamo'. Porygon-Z does
+    resolve to Porygon, and is then correctly rejected on differing stats."""
+    parts = name.split("-")
+    for i in range(len(parts) - 1, 0, -1):
+        base = by_name.get("-".join(parts[:i]))
+        if base:
+            return base
+    return None
+
+
 def _load_pairs() -> list[tuple[str, str, str]]:
     """(base_source, variant_source, genus) for every near-duplicate variant."""
     with connect() as conn, conn.cursor() as cur:
@@ -63,7 +78,7 @@ def _load_pairs() -> list[tuple[str, str, str]]:
     for name, src in sorted(by_name.items()):
         if "-" not in name:
             continue
-        base_src = by_name.get(name.rsplit("-", 1)[0])
+        base_src = _base_of(name, by_name)
         if not base_src:
             continue  # hyphen is part of the species name (Chi-Yu, Hakamo-o)
         v, b = parsed[src], parsed[base_src]
@@ -98,7 +113,8 @@ async def main():
         srcs = [p["source"] for p in passages]
         bi = srcs.index(base_src) if base_src in srcs else None
         vi = srcs.index(var_src) if var_src in srcs else None
-        family = var_src.rsplit("-", 1)[-1]
+        # the whole suffix, not its last segment: "Original-Cap", not "Cap"
+        family = var_src[len(base_src) + 1:]
 
         if bi is None and vi is None:
             neither += 1
