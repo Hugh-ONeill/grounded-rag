@@ -254,7 +254,7 @@ loud when a variant form is an acceptable source.
 
 ## Evaluation
 
-Run it yourself: `python -m eval.run_eval`. Over 108 gold questions (97 single-turn answerable,
+Run it yourself: `python -m eval.run_eval`. Over 109 gold questions (98 single-turn answerable,
 covering usage stats, corpus-wide aggregations, stat superlatives, species data, moves,
 abilities, items, learnsets, encyclopedic prose, competitive strategy, in-context comparisons,
 usage-versus-movepool intent,
@@ -267,12 +267,12 @@ paraphrases of the whole set), the current build scores:
 
 | Metric | Score |
 |--------|-------|
-| Retrieval hit-rate@k | 100% (97/97) |
+| Retrieval hit-rate@k | 100% (98/98) |
 | Follow-up hit-rate (condense → retrieve) | 100% (6/6) |
 | Paraphrase hit-rate | 100% (237/237) |
-| Answer faithfulness | 100% (90/90) |
+| Answer faithfulness | 100% (91/91) |
 | Refusal precision (no-answer) | 100% (5/5: 4 gate, 1 generator) |
-| Ungrounded entity mentions | 0 (over 90 generated answers) |
+| Ungrounded entity mentions | 0 (over 91 generated answers) |
 
 Method: hit-rate@k checks that the expected source appears among the retrieved top-k;
 faithfulness checks that the generated answer contains expected key terms; refusal precision
