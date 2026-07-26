@@ -150,8 +150,16 @@
   expect_source: "pokedex#Snorlax"
   expect_keywords: ["160"]
 
+# Form-variant stubs are legitimate sources here and must be named explicitly. The
+# PokeAPI adapter emits variants (Gmax/Alola/Mega/...) with the same genus, typing, dex
+# number and stats as the base species but no per-game flavor text: 189 variant docs
+# average 264 chars against 1202 for the 1162 base docs. That makes the stub *denser* on
+# exactly the identity facts a genus question asks for, so the cross-encoder ranks
+# pokedex#Snorlax-Gmax (0.99876) above pokedex#Snorlax (0.99046) and the base page falls
+# out of the top-8 on 3 of the 4 phrasings. The answer is right either way, which is why
+# this hid behind a bare-prefix match until _src_hit started requiring segment boundaries.
 - question: "Which Pokemon is known as the Sleeping Pokemon?"
-  expect_source: "pokedex#Snorlax"
+  expect_source: ["pokedex#Snorlax", "pokedex#Snorlax-Gmax"]
   expect_keywords: ["snorlax"]
 
 - question: "What does the ability Regenerator do?"

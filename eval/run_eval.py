@@ -41,13 +41,36 @@ from llm import answer_stream, condense_question    # noqa: E402
 FAITHFULNESS_FLOOR = 0.95
 
 
+# A match must end on a segment boundary. The substring rule exists so
+# "bulbapedia#Kingambit" matches "bulbapedia#Kingambit (Pokémon) § Biology", but a bare
+# prefix also swallows form and regional variants: "pokedex#Snorlax" silently matched
+# "pokedex#Snorlax-Gmax", and 3 of the 4 Sleeping-Pokemon queries were scoring a hit on
+# the Gigantamax page while the base species page never entered the top-k. The answers
+# were still right (both docs carry the genus), which is exactly why it went unnoticed.
+# Requiring the next character to start a new segment keeps the intended prefix matches
+# (audited: 309 clean hits and 13 clean-and-suffixed hits are unaffected) and forces a
+# gold entry to say out loud when a variant form is an acceptable source.
+_SEGMENT_CONTINUES = re.compile(r"[-\w]")
+
+
 def _src_hit(item, passages) -> bool:
     """expect_source may be one substring or an any-of list: "how do I deal with
     Kingambit?" is answered equally well by the chaos checks data or the Smogon
-    analysis prose, and pinning one of them makes paraphrase misses meaningless."""
+    analysis prose, and pinning one of them makes paraphrase misses meaningless.
+    The substring must land on a segment boundary (see _SEGMENT_CONTINUES) so a
+    prefix cannot be satisfied by a different entity that merely extends the name."""
     want = item.get("expect_source", "∅")
     wants = want if isinstance(want, list) else [want]
-    return any(w in (p["source"] or "") for p in passages for w in wants)
+    for p in passages:
+        src = p["source"] or ""
+        for w in wants:
+            start = 0
+            while (i := src.find(w, start)) >= 0:
+                rest = src[i + len(w):]
+                if not _SEGMENT_CONTINUES.match(rest):
+                    return True
+                start = i + 1
+    return False
 
 
 def _squash(s: str) -> str:
