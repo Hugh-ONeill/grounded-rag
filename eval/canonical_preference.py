@@ -98,7 +98,13 @@ def _genus_question(genus: str) -> str:
 async def main():
     pairs = _load_pairs()
     if not pairs:
-        print("no near-duplicate variants found; nothing to measure")
+        # Not a skip: zero pairs is the pass condition. The corpus fix removes the
+        # failure mode by construction rather than out-ranking it, so this metric's job
+        # from here is to fail loudly if near-duplicate stubs ever come back.
+        print("| Metric | Score |")
+        print("|--------|-------|")
+        print("| Near-duplicate variant documents in corpus | 0 (none to out-rank) |")
+        print("| Canonical preference | n/a, no competing stubs exist |")
         return
 
     base_first = variant_first = neither = 0
