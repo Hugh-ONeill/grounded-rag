@@ -202,6 +202,34 @@ frequencies once (ts_stat) and searches only the question's rarest terms, which 
 IDF weighting the built-in ranking lacks. The eval caught this as a real retrieval regression
 the moment the corpus grew past what the vector leg could carry alone.
 
+**A tuning constant that quietly lied, and the fix that had to be measured too.** The vector
+leg asks for `POOL = 60` candidates, but pgvector's `hnsw.ef_search` defaults to 40 and caps
+the candidate list, so a `LIMIT` above it silently returns fewer rows. The leg had been
+returning 40 for its entire life, and every downstream knob (RRF fusion, the reranker, title
+anchoring, the gate bands) was tuned against that number rather than the one in the source.
+The obvious correction, searching a wider frontier than requested so the returned candidates
+are chosen rather than exhaustive, made things worse: at `ef=80` and `ef=120` the extra
+candidates give the cross-encoder more chances to promote a loosely-related passage into a
+fixed-size top-8, and the "Sleeping Pokemon" paraphrase lost its answer to two Biology blurbs.
+A sweep over all 325 answerable queries put `ef=40` and `ef=60` at 100% and both wider
+settings at 99.7%, so the leg now asks for exactly `k`. Recall fed into a fixed window is not
+free, and the binding constraint here was never the candidate pool; it was the reranker's
+judgment at the top of it. Cost on the 24.5k-chunk corpus is 0.8ms against 0.6ms.
+
+**A gold question can pass for the wrong reason.** `expect_source` matches as a substring so
+that `bulbapedia#Kingambit` covers `bulbapedia#Kingambit (Pokémon) § Biology`, but a bare
+prefix also swallows form variants: `pokedex#Snorlax` was silently satisfied by
+`pokedex#Snorlax-Gmax`, and three of the four Sleeping-Pokemon phrasings scored a hit on the
+Gigantamax page while the base species page never entered the top-k. The answers stayed
+correct, which is exactly why it went unnoticed. The cause is corpus shape rather than
+ranking: the PokeAPI adapter emits variants as stubs carrying the same genus, typing, dex
+number and stats with none of the per-game flavor text, so 189 variant docs average 264
+characters against 1202 for the 1162 base docs. That makes the stub denser on precisely the
+identity facts a genus question asks for, and the cross-encoder scores it 0.99876 against
+0.99046 for the real page. Matching now has to land on a segment boundary, which leaves the
+309 clean hits and 13 clean-and-suffixed hits untouched and forces a gold entry to say out
+loud when a variant form is an acceptable source.
+
 ## Evaluation
 
 Run it yourself: `python -m eval.run_eval`. Over 108 gold questions (97 single-turn answerable,
