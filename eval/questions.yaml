@@ -186,6 +186,16 @@
   expect_source: "item#Choice Scarf"
   expect_keywords: ["speed"]
 
+# Near-duplicate of the question above, kept because it takes a different ROUTE. "usually"
+# matches the usage-stats scoping regex in router.py, which narrows the pool to the
+# crystal_battle corpus. That corpus used to carry 150 chunks of raw team pastes, so this
+# phrasing returned 8/8 pastes while the plain phrasing above was fine. The refusal gate
+# could not catch it: a paste listing Choice Scarf really is relevant. The pastes are gone
+# now, and this pins the phrasing so a future scoping change cannot quietly reintroduce it.
+- question: "What usually happens to a Pokemon holding a Choice Scarf?"
+  expect_source: ["item#Choice Scarf", "bulbapedia#Choice Scarf"]
+  expect_keywords: ["speed"]
+
 - question: "What does Booster Energy do?"
   expect_source: "item#Booster Energy"
   expect_keywords: ["protosynthesis"]
