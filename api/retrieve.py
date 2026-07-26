@@ -100,6 +100,18 @@ async def retrieve(question: str, k: int | None = None, corpus: str | None = Non
     where = ("WHERE " + " AND ".join(conds)) if conds else ""
     params += [qvec, k]
     with connect() as conn, conn.cursor() as cur:
+        # pgvector's hnsw.ef_search defaults to 40 and caps the candidate list, so a
+        # LIMIT above it silently returns fewer rows: the POOL=60 hybrid leg was only
+        # ever getting 40, and every downstream knob (RRF, reranker, anchoring) was
+        # tuned against that. Ask for exactly k and no more. A sweep over the 325
+        # answerable gold queries says the extra headroom is not free: ef=40 and ef=60
+        # both score 100%, but ef=80 and ef=120 drop the "Sleeping Pokemon" paraphrase,
+        # because a wider frontier hands the cross-encoder more chances to rank a
+        # Biology blurb above the right pokedex entry and evict it from the top-8.
+        # Cost at ef=60 on the 24.5k-chunk corpus: ~0.8ms vs ~0.6ms at the default.
+        # (set_config with is_local, not SET: SET takes no bind parameters, and the
+        # setting must not outlive this transaction.)
+        cur.execute("SELECT set_config('hnsw.ef_search', %s, true)", (str(max(40, k)),))
         # cosine distance -> similarity = 1 - distance
         cur.execute(
             f"""
