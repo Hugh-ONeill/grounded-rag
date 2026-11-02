@@ -1,0 +1,117 @@
+diff --git a/api/corpora/pokeapi.py b/api/corpora/pokeapi.py
+index c011c5b..79ab476 100644
+--- a/api/corpora/pokeapi.py
++++ b/api/corpora/pokeapi.py
+@@ -93,12 +93,79 @@ def load():
+         flavor_texts[r["species_id"]].append((version_names.get(r["version_id"], "?"), text))
+ 
+     # ---- Pokemon documents (default and alternate forms) ----
++    # Some alternate forms are near-duplicates: Gigantamax, Totem, and Pikachu's cap and
++    # cosplay sets carry the same typing, stats, abilities, genus and dex number as the
++    # base species and differ only in height and weight. As standalone documents they are
++    # short stubs, because only default forms get flavor text, and that makes them denser
++    # on exactly the identity facts a "which Pokemon is the X Pokemon" question asks for.
++    # The cross-encoder then ranks the stub above the real page: measured at 7% canonical
++    # preference over 54 such pairs (eval/canonical_preference.py). Fold them into the
++    # base document, keeping their dimensions so nothing becomes unanswerable, and leave
++    # forms that genuinely differ (Mega, Alola, Hisui, Galar, Therian) as their own docs.
++    poke_rows = list(_rows(csvdir, "pokemon"))
++
++    def _identity(pid):
++        return (
++            " / ".join(t for _, t in sorted(p_types.get(pid, []))),
++            tuple(sorted(p_stats.get(pid, {}).items())),
++            tuple(sorted(p_abilities.get(pid, []))),
++        )
++
++    # Fold into the nearest ancestor that actually matches, checking every name prefix
++    # from longest to shortest and the species default last. Nearest-prefix alone is not
++    # enough in either direction: Toxtricity-Low-Key-Gmax duplicates Toxtricity-Low-Key
++    # but differs from the default Amped form on abilities, while Minior-Orange-Meteor
++    # duplicates the default Minior and merely shares a prefix with Minior-Orange, whose
++    # stats differ. Species whose name contains a hyphen resolve to nothing, which is
++    # what we want: Chi-Yu would have to find Chi.
++    row_by_name = {}
++    for r in poke_rows:
++        display = (species_name.get(r["species_id"], _pretty(r["identifier"]))
++                   if r["is_default"] == "1" else _pretty(r["identifier"]))
++        row_by_name[display] = r
++
++    def _fold_target(r):
++        parts = _pretty(r["identifier"]).split("-")
++        candidates = ["-".join(parts[:i]) for i in range(len(parts) - 1, 0, -1)]
++        seen = set()
++        for cand in candidates:
++            target = row_by_name.get(cand)
++            if target and target["id"] != r["id"] and target["id"] not in seen:
++                seen.add(target["id"])
++                if _identity(r["id"]) == _identity(target["id"]):
++                    return target
++        default = default_row.get(r["species_id"])
++        if default and default["id"] != r["id"] and _identity(r["id"]) == _identity(default["id"]):
++            return default
++        return None
++
++    default_row = {r["species_id"]: r for r in poke_rows if r["is_default"] == "1"}
++    fold_into = {}  # folded pokemon id -> id of the form it merges into
++    for r in poke_rows:
++        if r["is_default"] == "1":
++            continue
++        target = _fold_target(r)
++        if target:
++            fold_into[r["id"]] = target["id"]
++
++    folded_ids = set(fold_into)
++    folded_forms = defaultdict(list)  # surviving pokemon id -> [(form name, height, weight)]
++    for r in poke_rows:
++        if r["id"] not in fold_into:
++            continue
++        host = r["id"]  # walk to the surviving ancestor in case a chain forms
++        while host in fold_into:
++            host = fold_into[host]
++        folded_forms[host].append((_pretty(r["identifier"]), r["height"], r["weight"]))
++
+     pokemon_display = {}  # pokemon_id -> display name (reused by learnsets)
+-    for r in _rows(csvdir, "pokemon"):
++    for r in poke_rows:
+         pid, sid = r["id"], r["species_id"]
+         is_default = r["is_default"] == "1"
+         name = species_name.get(sid, _pretty(r["identifier"])) if is_default else _pretty(r["identifier"])
+         pokemon_display[pid] = name
++        if pid in folded_ids:
++            continue  # folded into the base species document below; learnsets still resolve
+ 
+         types = " / ".join(t for _, t in sorted(p_types.get(pid, [])))
+         genus = species_genus.get(sid, "")
+@@ -120,6 +187,12 @@ def load():
+         if r["height"] and r["weight"]:
+             lines.append(f"Height {int(r['height'])/10:g} m, weight {int(r['weight'])/10:g} kg.")
+ 
++        if folded_forms.get(pid):  # any surviving form can host duplicates, not just the default
++            dims = ", ".join(
++                f"{fname} (height {int(h)/10:g} m, weight {int(w)/10:g} kg)" if h and w else fname
++                for fname, h, w in folded_forms[pid])
++            lines.append(f"Alternate forms with identical typing, stats and abilities: {dims}.")
++
+         if is_default and flavor_texts.get(sid):
+             lines.append("Pokedex entries:")
+             lines += [f"- {ver}: {text}" for ver, text in flavor_texts[sid][:12]]
+diff --git a/eval/canonical_preference.py b/eval/canonical_preference.py
+index 4d188c6..4e4936b 100644
+--- a/eval/canonical_preference.py
++++ b/eval/canonical_preference.py
+@@ -98,7 +98,13 @@ def _genus_question(genus: str) -> str:
+ async def main():
+     pairs = _load_pairs()
+     if not pairs:
+-        print("no near-duplicate variants found; nothing to measure")
++        # Not a skip: zero pairs is the pass condition. The corpus fix removes the
++        # failure mode by construction rather than out-ranking it, so this metric's job
++        # from here is to fail loudly if near-duplicate stubs ever come back.
++        print("| Metric | Score |")
++        print("|--------|-------|")
++        print("| Near-duplicate variant documents in corpus | 0 (none to out-rank) |")
++        print("| Canonical preference | n/a, no competing stubs exist |")
+         return
+ 
+     base_first = variant_first = neither = 0
