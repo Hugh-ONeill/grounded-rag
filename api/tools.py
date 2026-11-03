@@ -563,7 +563,7 @@ def recommend_ou_teammates(have: list[str] | None = None,
 
 # Stage 2 team generator: assemble a legal team, gated by the Showdown validator.
 _NODE = shutil.which("node")
-_VALIDATE_JS = os.path.expanduser("~/Developer/team-tools/validate_teams.js")
+_VALIDATE_JS = os.path.expanduser("~/Developer/grimoire/team-tools/validate_teams.js")
 _STAT_ORDER = ["HP", "Atk", "Def", "SpA", "SpD", "Spe"]
 _KEY_ROLES = ["hazard setter", "hazard control", "speed control", "wall / staller", "pivot"]
 
